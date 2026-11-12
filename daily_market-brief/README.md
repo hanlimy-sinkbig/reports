@@ -20,7 +20,7 @@ PDF는 아이패드 단축어 자동화가 받아 아이클라우드 드라이�
 | 지난 PDF | 아이클라우드 드라이브 `reports/daily_market-brief/YYYY-MM/MMDD_요일.pdf` |
 
 ## 실행 일정
-- 평일 07:30 KST 예약(`.github/workflows/daily_market-brief.yml`). GitHub 예약 실행은 늦어질 수 있어 보통 8시 전후 완료.
+- 평일 06:00 KST 예약(`.github/workflows/daily_market-brief.yml`). GitHub 예약 실행은 늦어질 수 있어 보통 6시~6시 반 완료.
 - 한국·미국이 모두 휴장이라 새 데이터가 없으면 건너뜁니다.
 - 수동 실행: 저장소 **Actions → daily_market-brief → Run workflow** (`force` 체크 시 휴장일에도 생성)
 - 선택: 저장소 Settings → Secrets → Actions 에 `ANTHROPIC_API_KEY` 를 넣으면 종목별 뉴스 요약 한 줄 추가
@@ -28,7 +28,7 @@ PDF는 아이패드 단축어 자동화가 받아 아이클라우드 드라이�
 ## 아이패드 단축어 (PDF → 아이클라우드)
 `latest.json`에서 파일명(`pdf_name`, 예: `1113_금.pdf`)과 월(`month`, 예: `2026-11`)을 읽고,
 `latest.pdf`를 받아 `iCloud Drive/reports/daily_market-brief/<month>/<pdf_name>`으로 저장합니다.
-매일 08:30 개인용 자동화로 실행합니다("즉시 실행", 같은 이름이면 덮어쓰기).
+평일 08:00 개인용 자동화로 실행합니다("즉시 실행", 같은 이름이면 덮어쓰기).
 
 ## 로컬(맥) 실행도 가능
 ```bash

@@ -43,7 +43,6 @@ jobs:
           pip install -q -r "$REPORT/requirements.txt"
 
       - name: 인사이트 생성
-        env:
         run: python "$REPORT/edu_insight.py" --outdir "_site/$REPORT"
 
       - name: 기존 리포트 보존 확인

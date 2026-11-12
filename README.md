@@ -5,6 +5,7 @@ GitHub Actions가 자동으로 만드는 개인 리포트 모음입니다. 결�
 - 목록: https://hanlimy-sinkbig.github.io/reports/
 - 시장 브리핑 (평일 06:30): https://hanlimy-sinkbig.github.io/reports/daily_market-brief/
 - AI 뉴스 대시보드 (매일 06:40): https://hanlimy-sinkbig.github.io/reports/daily_ai-news/
+- 교육·입시 인사이트 (매주 월 06:50): https://hanlimy-sinkbig.github.io/reports/weekly_edu-insight/
 
 ## 이름 규칙
 - 모두 소문자. 구획 사이는 `_`, 한 구획 안 단어 사이는 `-` → `<주기>_<주제>`

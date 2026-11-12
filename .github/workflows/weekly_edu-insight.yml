@@ -1,0 +1,62 @@
+# 매일 아침 교육·입시 인사이트 대시보드를 만들어 GitHub Pages(gh-pages 브랜치)에 게시합니다.
+#  - 매주 월요일 06:50 KST 예약 (GitHub 예약 실행은 수십 분 늦어질 수 있음)
+#  - Actions 탭 → weekly_edu-insight → Run workflow 로 수동 실행 가능
+#  - 기존 게시본(다른 리포트 포함)을 먼저 가져와 자기 폴더만 바꾼 뒤 게시합니다.
+name: weekly_edu-insight
+
+on:
+  schedule:
+    - cron: "50 21 * * 0"     # UTC 일요일 21:50 = KST 월요일 06:50
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:            # 모든 리포트가 같은 그룹 → gh-pages 를 순서대로 갱신
+  group: gh-pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      TZ: Asia/Seoul
+      REPORT: weekly_edu-insight
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 기존 게시본 가져오기 (다른 리포트·지난 기록 유지)
+        run: |
+          git clone --depth 1 --branch gh-pages "https://github.com/${GITHUB_REPOSITORY}.git" _site \
+            && rm -rf _site/.git || mkdir -p _site
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: ${{ env.REPORT }}/requirements.txt
+
+      - name: 한글 폰트 · 패키지 설치
+        run: |
+          sudo apt-get update -qq && sudo apt-get install -y -qq fonts-noto-cjk
+          pip install -q -r "$REPORT/requirements.txt"
+
+      - name: 인사이트 생성
+        env:
+        run: python "$REPORT/edu_insight.py" --outdir "_site/$REPORT"
+
+      - name: 기존 리포트 보존 확인
+        run: |
+          test -f _site/daily_market-brief/index.html || { echo "::warning::daily_market-brief 게시본이 없습니다"; }
+
+      - name: GitHub Pages 게시 (gh-pages, 이력 없이 덮어쓰기)
+        uses: peaceiris/actions-gh-pages@v4
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_branch: gh-pages
+          publish_dir: ./_site
+          force_orphan: true
+          user_name: github-actions[bot]
+          user_email: 41898282+github-actions[bot]@users.noreply.github.com
+          commit_message: ${{ env.REPORT }}

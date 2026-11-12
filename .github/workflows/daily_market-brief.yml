@@ -1,11 +1,11 @@
 # 매일 아침 시장 브리핑을 만들어 GitHub Pages(gh-pages 브랜치)에 게시합니다.
-#  - 평일 06:00 KST 예약 (GitHub 예약 실행은 수십 분 늦어질 수 있음)
+#  - 평일 06:30 KST 예약 (GitHub 예약 실행은 수십 분 늦어질 수 있음)
 #  - Actions 탭 → daily_market-brief → Run workflow 로 수동 실행 가능
 name: daily_market-brief
 
 on:
   schedule:
-    - cron: "0 21 * * 0-4"    # UTC 일~목 21:00 = KST 월~금 06:00
+    - cron: "30 21 * * 0-4"   # UTC 일~목 21:30 = KST 월~금 06:30 (겨울 미국 마감 06:00 이후)
   workflow_dispatch:
     inputs:
       force:

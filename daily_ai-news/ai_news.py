@@ -9,7 +9,7 @@ AI 뉴스 종합 대시보드 (daily_ai-news)
   ① 오늘의 핵심       여러 매체가 함께 다룬 이야기 순(화제 묶음) + (선택) AI 요약
   ② 숫자로 보는 오늘   기업·모델 언급 수, 분야별 기사 수, 최근 7일 언급 추이
   ③ 분야별 뉴스        모델·제품 / 연구 / 정책·규제 / 투자·산업 / 국내 / 기타
-  ④ 공식 발표          OpenAI·Google DeepMind·NVIDIA·Microsoft·Hugging Face 블로그 최근 글
+  ④ 공식 발표          OpenAI·Google DeepMind·Google AI·NVIDIA·Hugging Face 블로그 최근 글
 
 사용법
 ------
@@ -69,7 +69,6 @@ FEEDS = [
     ("Google DeepMind", "https://deepmind.google/blog/rss.xml", "en", "official", 10),
     ("Google AI", "https://blog.google/technology/ai/rss/", "en", "official", 10),
     ("NVIDIA", "https://blogs.nvidia.com/feed/", "en", "official", 10),
-    ("Microsoft AI", "https://blogs.microsoft.com/ai/feed/", "en", "official", 10),
     ("Hugging Face", "https://huggingface.co/blog/feed.xml", "en", "official", 10),
     ("Hacker News", "https://hnrss.org/newest?q=AI+OR+LLM+OR+OpenAI+OR+Anthropic+OR+GPT&points=100", "en", "community", 20),
 ]
@@ -240,18 +239,21 @@ def cluster(items: list[dict]) -> list[dict]:
     """제목 단어 겹침으로 같은 이야기 묶기 → 매체 수가 많은 순"""
     clusters: list[dict] = []
     for it in sorted(items, key=lambda x: x["published"] or "", reverse=True):
-        tk = tokens(it["title"])
+        tk, ents = tokens(it["title"]), set(it["entities"])
         best, best_s = None, 0.0
         for c in clusters:
             inter = len(tk & c["tokens"])
             s = inter / max(1, min(len(tk), len(c["tokens"])))
-            if inter >= 3 and s > best_s:
+            # 단어 3개 이상 겹치거나, 같은 기업을 다루면서 핵심 단어 2개 이상 겹치면 같은 이야기
+            ok = (inter >= 3 and s >= 0.4) or (inter >= 2 and s >= 0.28 and ents & c["ents"])
+            if ok and s > best_s:
                 best, best_s = c, s
-        if best is not None and best_s >= 0.5:
+        if best is not None:
             best["items"].append(it)
             best["tokens"] |= tk
+            best["ents"] |= ents
         else:
-            clusters.append({"tokens": set(tk), "items": [it]})
+            clusters.append({"tokens": set(tk), "ents": set(ents), "items": [it]})
     for c in clusters:
         srcs = {i["source"] for i in c["items"]}
         c["n_sources"] = len(srcs)
@@ -262,7 +264,7 @@ def cluster(items: list[dict]) -> list[dict]:
         c["latest"] = max((i["published"] or "") for i in c["items"])
         c["score"] = c["n_sources"] * 2 + len(c["items"]) + (2 if any(i["kind"] == "official" for i in c["items"]) else 0) \
             + (1 if any(i["kind"] == "community" for i in c["items"]) else 0)
-        del c["tokens"]
+        del c["tokens"], c["ents"]
     clusters.sort(key=lambda c: c["latest"], reverse=True)   # 동점이면 최신 순
     return sorted(clusters, key=lambda c: -c["score"])
 

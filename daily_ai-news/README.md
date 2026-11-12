@@ -7,7 +7,7 @@
 | ① 오늘의 핵심 | 기사·이야기·새 이야기 수, (선택) AI 브리핑 5줄, 여러 매체가 함께 다룬 이야기 TOP 10 |
 | ② 숫자로 보는 오늘 | 기업·모델 언급 수, 분야별 이야기 수, 최근 7일 언급 추이 |
 | ③ 분야별 뉴스 | 모델·제품 / 연구 / 정책·규제 / 투자·산업 / 국내 / 기타 (탭) |
-| ④ 공식 발표 | OpenAI, Google DeepMind, Google AI, NVIDIA, Microsoft AI, Hugging Face 블로그 최근 7일 |
+| ④ 공식 발표 | OpenAI, Google DeepMind, Google AI, NVIDIA, Hugging Face 블로그 최근 7일 |
 
 - 웹: https://hanlimy-sinkbig.github.io/reports/daily_ai-news/
 - PDF: `latest.pdf` / 단축어용 정보: `latest.json` (`pdf_name`, `month`) — 구조는 daily_market-brief 와 동일

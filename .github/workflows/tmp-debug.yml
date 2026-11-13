@@ -1,0 +1,23 @@
+name: tmp-debug
+on: workflow_dispatch
+jobs:
+  d:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: pip install -q requests
+      - run: |
+          cd daily_baseball-insight && python - <<'PY'
+          import requests, re, baseball_insight as X
+          H=X.UA
+          r=requests.get("https://www.koreabaseball.com/Record/TeamRank/TeamRankDaily.aspx",headers=H,timeout=20)
+          t=r.text
+          for m in re.finditer(r"20\d\d[.\-/]\d\d[.\-/]\d\d",t): print("KBODATE", t[max(0,m.start()-120):m.end()+20].replace("\n"," "))
+          tb=X.parse_tables(t)
+          for i,x in enumerate(tb): print("KBOTB",i,x[:3])
+          for u in ["https://npb.jp/bis/2026/stats/std_c.html","https://npb.jp/bis/2025/stats/std_c.html"]:
+              r=requests.get(u,headers=H,timeout=20); print("NPB",u,r.status_code,r.encoding,r.apparent_encoding,len(r.content))
+              r.encoding=r.apparent_encoding; t=r.text
+              print("HEAD",t[:600].replace("\n"," "))
+              for i,x in enumerate(X.parse_tables(t)): print("NPBTB",i,len(x),x[:4])
+          PY

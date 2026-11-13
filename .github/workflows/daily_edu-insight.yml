@@ -1,12 +1,12 @@
 # 매일 아침 교육·입시 인사이트 대시보드를 만들어 GitHub Pages(gh-pages 브랜치)에 게시합니다.
-#  - 매주 월요일 06:50 KST 예약 (GitHub 예약 실행은 수십 분 늦어질 수 있음)
-#  - Actions 탭 → weekly_edu-insight → Run workflow 로 수동 실행 가능
+#  - 매일 06:50 KST 예약 (GitHub 예약 실행은 수십 분 늦어질 수 있음)
+#  - Actions 탭 → daily_edu-insight → Run workflow 로 수동 실행 가능
 #  - 기존 게시본(다른 리포트 포함)을 먼저 가져와 자기 폴더만 바꾼 뒤 게시합니다.
-name: weekly_edu-insight
+name: daily_edu-insight
 
 on:
   schedule:
-    - cron: "50 21 * * 0"     # UTC 일요일 21:50 = KST 월요일 06:50
+    - cron: "50 21 * * *"     # UTC 매일 21:50 = KST 매일 06:50
   workflow_dispatch:
 
 permissions:
@@ -22,7 +22,7 @@ jobs:
     timeout-minutes: 20
     env:
       TZ: Asia/Seoul
-      REPORT: weekly_edu-insight
+      REPORT: daily_edu-insight
     steps:
       - uses: actions/checkout@v4
 
@@ -30,6 +30,12 @@ jobs:
         run: |
           git clone --depth 1 --branch gh-pages "https://github.com/${GITHUB_REPOSITORY}.git" _site \
             && rm -rf _site/.git || mkdir -p _site
+          # 이름 변경(weekly → daily): 지난 게시본을 새 폴더로 옮기고 옛 폴더 정리
+          if [ -d _site/weekly_edu-insight ]; then
+            mkdir -p "_site/$REPORT/archive"
+            cp -n _site/weekly_edu-insight/archive/*.html "_site/$REPORT/archive/" 2>/dev/null || true
+            rm -rf _site/weekly_edu-insight
+          fi
 
       - uses: actions/setup-python@v5
         with:

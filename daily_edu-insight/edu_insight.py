@@ -1,17 +1,17 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-교육·입시 인사이트 대시보드 (weekly_edu-insight)
+교육·입시 인사이트 대시보드 (daily_edu-insight)
 ================================================
-매주 월요일 아침, 정리된 입시 정보(edu_data.py)와 최근 7일 교육 뉴스(Google News RSS)를 합쳐
+매일 아침, 정리된 입시 정보(edu_data.py)와 최근 7일 교육 뉴스(Google News RSS)를 합쳐
 대시보드(HTML)와 PDF를 GitHub Pages 에 게시합니다.
 
   ① 핵심 요약 · 학생 타임라인        ② 의대 정원·합격선 (차트)
   ③ 고교 유형 비교 · 영재고/과학고/자사고  ④ 대학: 설카포 · 서성한
   ⑤ 의대 지망 학생 조언 · 선택과목 로드맵   ⑥ 이번 주 교육 뉴스(자동)
 
-  python edu_insight.py --outdir _site/weekly_edu-insight
-  python edu_insight.py --demo --outdir out/weekly_edu-insight     # 뉴스 없이 레이아웃 확인
+  python edu_insight.py --outdir _site/daily_edu-insight
+  python edu_insight.py --demo --outdir out/daily_edu-insight     # 뉴스 없이 레이아웃 확인
 """
 from __future__ import annotations
 
@@ -130,7 +130,7 @@ footer{margin-top:40px;color:var(--text-muted);font-size:12px}
 footer a{color:var(--text-muted)}
 </style></head><body><div class="wrap">
 <header><h1>교육·입시 인사이트</h1>
-<div class="meta">생성 __GENERATED__ · 정리 데이터 기준일 __UPDATED__ · 매주 월요일 갱신 · <a href="latest.pdf">PDF</a> · <a href="archive/">지난 호</a></div></header>
+<div class="meta">생성 __GENERATED__ · 정리 데이터 기준일 __UPDATED__ · 매일 갱신 · <a href="latest.pdf">PDF</a> · <a href="archive/">지난 리포트</a></div></header>
 __DEMO__
 <nav><a href="#s1">① 핵심 요약</a><a href="#s2">② 의대 정원·합격선</a><a href="#s3">③ 고교 선택</a><a href="#s4">④ 대학</a><a href="#s5">⑤ 의대 지망 조언</a><a href="#s6">⑥ 이번 주 뉴스</a></nav>
 
@@ -287,7 +287,7 @@ def render_pdf(d: dict, path: Path) -> Path:
             s.fig.text(0.06, 0.94, f"생성 {d['generated']} · 정리 기준일 {d['updated']} · 수치는 보도 기준, 공식 요강으로 확인",
                        fontsize=7.5, color=SUB, va="top")
             s.fig.text(0.94, 0.02, str(pno), fontsize=7, color=MUTED, ha="right")
-            s.fig.text(0.06, 0.02, "weekly_edu-insight · 일반 정보 정리이며 개별 진학 상담을 대신하지 않습니다", fontsize=6.5, color=MUTED)
+            s.fig.text(0.06, 0.02, "daily_edu-insight · 일반 정보 정리이며 개별 진학 상담을 대신하지 않습니다", fontsize=6.5, color=MUTED)
 
         def t(s, txt, size=8.5, color=TEXT, bold=False, ind=0.0, lh=0.0155, w=104, url=None):
             for k, part in enumerate(wrap(txt, w)):
@@ -387,7 +387,7 @@ def write_indexes(site: Path, sub: str) -> None:
     arch = site / sub / "archive"
     links = sorted((p for p in arch.glob("*.html") if p.name != "index.html"), reverse=True)
     items = "".join(f'<li><a href="{p.name}">{p.stem}</a></li>' for p in links)
-    (arch / "index.html").write_text(f'{head}<title>{sub} 지난 호</title><h2>{sub} · 지난 호</h2>'
+    (arch / "index.html").write_text(f'{head}<title>{sub} 지난 리포트</title><h2>{sub} · 지난 리포트</h2>'
                                      f'<p><a href="../">← 최신</a></p><ul>{items}</ul>', encoding="utf-8")
     subs = sorted(x.name for x in site.iterdir() if x.is_dir() and (x / "index.html").exists())
     items = "".join(f'<li><a href="{x}/">{x}</a> · <a href="{x}/archive/">지난 리포트</a></li>' for x in subs)
@@ -397,8 +397,8 @@ def write_indexes(site: Path, sub: str) -> None:
 
 def main(argv=None):
     ap = argparse.ArgumentParser(description="교육·입시 인사이트 대시보드")
-    ap.add_argument("--outdir", default="_site/weekly_edu-insight")
-    ap.add_argument("--keep-days", type=int, default=730)
+    ap.add_argument("--outdir", default="_site/daily_edu-insight")
+    ap.add_argument("--keep-days", type=int, default=365)
     ap.add_argument("--no-pdf", action="store_true")
     ap.add_argument("--demo", action="store_true")
     a = ap.parse_args(argv)

@@ -452,7 +452,7 @@ document.getElementById('mlb-games').innerHTML=M.games.length?`<h3>최근 경기
  M.games.map(g=>{const aw=+g.as>+g.hs;return `<tr><td class="l">${aw?'<b>':''}${esc(g.away)}${aw?'</b>':''}</td><td>${esc(g.as)} : ${esc(g.hs)}</td><td class="l">${aw?'':'<b>'}${esc(g.home)}${aw?'':'</b>'}</td></tr>`}).join('')+'</table></div>'
  :'<h3>최근 경기 결과</h3><p class="muted">최근 이틀간 경기가 없습니다(비시즌 또는 휴식일).</p>';
 document.getElementById('mlb-div').innerHTML=M.divisions.length?M.divisions.map(dv=>`<div class="card tbl"><h3>${esc(dv.name)}</h3><table><tr><th>#</th><th class="l">팀</th><th>승</th><th>패</th><th>승률</th><th>GB</th></tr>`+
- dv.rows.map(r=>`<tr class="${r.rank==1?'top':''}"><td>${esc(r.rank)}</td><td class="l" title="${esc(r.city)} · ${esc(r.venue)}"><b>${esc(r.team)}</b><br><span class="muted">${esc(r.venue)}</span></td><td>${esc(r.w)}</td><td>${esc(r.l)}</td><td>${esc(r.pct)}</td><td>${esc(r.gb)}</td></tr>`).join('')+'</table></div>').join(''):`<div class="card">${none}</div>`;
+ dv.rows.map(r=>`<tr class="${r.rank==1?'top':''}"><td>${esc(r.rank)}</td><td class="l wrap" title="${esc(r.city)} · ${esc(r.venue)}"><b>${esc(r.team)}</b><br><span class="muted">${esc(r.venue)}</span></td><td>${esc(r.w)}</td><td>${esc(r.l)}</td><td>${esc(r.pct)}</td><td>${esc(r.gb)}</td></tr>`).join('')+'</table></div>').join(''):`<div class="card">${none}</div>`;
 // NPB
 const N=D.npb;
 document.getElementById('npb-year').textContent=`(${D.year} 정규시즌)`;

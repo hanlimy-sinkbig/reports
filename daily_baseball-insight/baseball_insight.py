@@ -146,6 +146,27 @@ def fetch_kbo() -> dict:
 
 
 # ---------------------------------------------------------------- NPB
+NPB_ALIAS = {"読売": "巨人", "ジャイアンツ": "巨人", "タイガース": "阪神", "ベイスターズ": "DeNA", "カープ": "広島",
+             "スワローズ": "ヤクルト", "ドラゴンズ": "中日", "ホークス": "ソフトバンク", "ファイターズ": "日本ハム",
+             "マリーンズ": "ロッテ", "イーグルス": "楽天", "ライオンズ": "西武", "バファローズ": "オリックス"}
+
+
+def npb_key(cell: str) -> str | None:
+    """'阪神タイガース'·'阪　神'·'巨人' 등 표기 → NPB_TEAMS 키."""
+    c = nfkc(cell)
+    if c in B.NPB_TEAMS:
+        return c
+    if len(c) > 20:
+        return None
+    for k in B.NPB_TEAMS:
+        if c.startswith(k):
+            return k
+    for a, k in NPB_ALIAS.items():
+        if a in c:
+            return k
+    return None
+
+
 def npb_standings_from_html(text: str) -> list[dict]:
     out = []
     for tb in parse_tables(text):
@@ -153,15 +174,16 @@ def npb_standings_from_html(text: str) -> list[dict]:
         for r in tb:
             if not r:
                 continue
-            ti = next((i for i, c in enumerate(r[:3]) if nfkc(c) in B.NPB_TEAMS), None)
+            ti = next((i for i, c in enumerate(r[:3]) if npb_key(c)), None)
             if ti is None:
                 continue
             nums = r[ti + 1: ti + 7]
             if len(nums) < 6 or not re.fullmatch(r"\d+", nfkc(nums[0])):
                 continue
-            key = nfkc(r[ti])
+            key = npb_key(r[ti])
+            gb = nfkc(nums[5])
             cand.append({"team": key, "g": nfkc(nums[0]), "w": nfkc(nums[1]), "l": nfkc(nums[2]), "t": nfkc(nums[3]),
-                         "pct": nfkc(nums[4]), "gb": nfkc(nums[5])})
+                         "pct": nfkc(nums[4]), "gb": "-" if gb in ("--", "-", "") else gb})
         if len(cand) >= 6:
             # 같은 표에 팀이 두 번 나오면(맞대결 표 등) 첫 등장만
             seen, uniq = set(), []
@@ -181,7 +203,7 @@ def fetch_npb(year: int) -> dict:
         url = f"https://npb.jp/bis/{year}/stats/{page}.html"
         try:
             r = get(url)
-            r.encoding = "utf-8" if "utf-8" in r.text[:2000].lower() else (r.apparent_encoding or "utf-8")
+            r.encoding = "utf-8"
             res[key] = npb_standings_from_html(r.text)
             log(f"NPB {key}: {len(res[key])}팀")
         except Exception as e:
@@ -322,7 +344,7 @@ def build_data(kbo, npb, mlb, news, now, year) -> dict:
             t = mlb["teams"].get(r["id"], {})
             r["city"], r["venue"] = t.get("city", ""), t.get("venue", "")
             mlb_info.append({"div": dv["name"], "name": r["team"], "city": r["city"], "venue": r["venue"]})
-    sections = {k: {"label": lab, "items": news.get(k, [])} for k, lab, _ in B.NEWS_QUERIES}
+    sections = {k: {"label": lab, "items": news.get(k, []), "days": B.NEWS_DAYS.get(k, 2)} for k, lab, _ in B.NEWS_QUERIES}
     return {
         "generated": now.strftime("%Y-%m-%d %H:%M KST"), "today": now.strftime("%Y-%m-%d"), "updated": B.UPDATED, "year": year,
         "headlines": headlines(news), "news": sections, "npb_ja": news.get("npb_ja", []),
@@ -415,13 +437,13 @@ const li=n=>`<li>${n.tag?`<span class="tag">${esc(n.tag)}</span>`:''}<a href="${
 const none='<p class="muted">가져오지 못했습니다(사이트 응답 없음 또는 비시즌). 출처 링크에서 직접 확인하세요.</p>';
 document.getElementById('hl').innerHTML=D.headlines.map(li).join('')||'<li class="muted">최근 2일 기사가 없습니다.</li>';
 for(const [k,s] of Object.entries(D.news)){const el=document.getElementById('n-'+k);if(!el)continue;
- el.innerHTML=`<h3>${esc(s.label)} <span class="muted">${s.items.length}건</span></h3>`+(s.items.length?`<ul class="news">${s.items.map(li).join('')}</ul>`:'<p class="muted">최근 2일 기사가 없습니다.</p>');}
+ el.innerHTML=`<h3>${esc(s.label)} <span class="muted">${s.items.length}건</span></h3>`+(s.items.length?`<ul class="news">${s.items.map(li).join('')}</ul>`:`<p class="muted">최근 ${s.days}일 기사가 없습니다.</p>`);}
 // KBO
 const K=D.kbo;
 document.getElementById('kbo-date').textContent=K.date?`(${K.date} 기준)`:'';
 document.getElementById('kbo-tbl').outerHTML=K.rows.length?`<table><tr><th>순위</th><th class="l">팀</th><th>경기</th><th>승</th><th>패</th><th>무</th><th>승률</th><th>게임차</th><th>최근10</th><th>연속</th></tr>`+
  K.rows.map((r,i)=>`<tr class="${i<5?'top':''}"><td>${esc(r.rank)}</td><td class="l"><b>${esc(r.name)}</b></td><td>${esc(r.g)}</td><td>${esc(r.w)}</td><td>${esc(r.l)}</td><td>${esc(r.t)}</td><td>${esc(r.pct)}</td><td>${esc(r.gb)}</td><td>${esc(r.l10)}</td><td>${esc(r.streak)}</td></tr>`).join('')+
- `</table><p class="note">음영: 5위까지(포스트시즌 진출권) · <a href="${esc(K.src)}" target="_blank" rel="noopener">KBO 기록실</a></p>`:none;
+ `</table><p class="note">음영: 5위까지(포스트시즌 진출권). 시즌이 끝나면 KBO 기록실은 포스트시즌 결과를 반영한 최종 순위를 보여 주며, 게임차는 정규시즌 기준입니다 · <a href="${esc(K.src)}" target="_blank" rel="noopener">KBO 기록실</a></p>`:none;
 document.getElementById('kbo-info').innerHTML='<tr><th class="l">구단</th><th class="l">연고지</th><th class="l">홈구장</th></tr>'+K.info.map(t=>`<tr><td class="l">${esc(t.name)}</td><td class="l">${esc(t.city)}</td><td class="l">${esc(t.park)}</td></tr>`).join('');
 // MLB
 const M=D.mlb;
@@ -595,7 +617,7 @@ def main(argv=None):
         kbo, npb, mlb, news = demo_data(year)
     else:
         kbo, npb, mlb = fetch_kbo(), fetch_npb(year), fetch_mlb(year, now)
-        news = {k: fetch_news(lab, q) for k, lab, q in B.NEWS_QUERIES}
+        news = {k: fetch_news(lab, q, days=B.NEWS_DAYS.get(k, 2)) for k, lab, q in B.NEWS_QUERIES}
         news["npb_ja"] = fetch_news("NPB 일본어", B.NPB_JA_QUERY, limit=8, lang="ja", days=1)
     d = build_data(kbo, npb, mlb, news, now, year)
     wd = WEEKDAY[now.weekday()]

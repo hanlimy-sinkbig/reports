@@ -7,8 +7,8 @@
 대시보드(HTML)와 PDF를 GitHub Pages 에 게시합니다.
 
   ① 핵심 요약 · 학생 타임라인        ② 의대 정원·합격선 (차트)
-  ③ 고교 유형 비교 · 영재고/과학고/자사고  ④ 대학: 설카포 · 서성한
-  ⑤ 의대 지망 학생 조언 · 선택과목 로드맵   ⑥ 이번 주 교육 뉴스(자동)
+  ③ 반도체 계약학과 정원·합격선  ④ 고교 유형 비교 · 영재고/과학고/자사고  ⑤ 대학: 설카포 · 서성한
+  ⑥ 의대 지망 학생 조언 · 선택과목 로드맵   ⑦ 이번 주 교육 뉴스(자동)
 
   python edu_insight.py --outdir _site/daily_edu-insight
   python edu_insight.py --demo --outdir out/daily_edu-insight     # 뉴스 없이 레이아웃 확인
@@ -119,7 +119,7 @@ th{color:var(--text-secondary);font-weight:600;font-size:12.5px;white-space:nowr
 .tbl{overflow-x:auto}
 table.num th,table.num td{text-align:right;white-space:nowrap;padding:6px 5px}table.num th:first-child,table.num td:first-child{text-align:left}
 table.num td small{color:var(--s2);font-size:11px;margin-left:2px}table.num tr.sum td{font-weight:700;border-top:2px solid var(--border)}
-table.num tr.grp td{color:var(--text-muted);font-size:12px;text-align:left;padding-top:10px}
+table.num .l{text-align:left}table.num tr.grp td{color:var(--text-muted);font-size:12px;text-align:left;padding-top:10px}
 .stars{color:var(--accent);letter-spacing:1px;white-space:nowrap}
 .chart{width:100%;height:330px}
 ul.tight{margin:0;padding-left:18px} ul.tight li{margin:4px 0}
@@ -135,7 +135,7 @@ footer a{color:var(--text-muted)}
 <header><h1>교육·입시 인사이트</h1>
 <div class="meta">생성 __GENERATED__ · 정리 데이터 기준일 __UPDATED__ · 매일 갱신 · <a href="latest.pdf">PDF</a> · <a href="archive/">지난 리포트</a></div></header>
 __DEMO__
-<nav><a href="#s1">① 핵심 요약</a><a href="#s2">② 의대 정원·합격선</a><a href="#s3">③ 고교 선택</a><a href="#s4">④ 대학</a><a href="#s5">⑤ 의대 지망 조언</a><a href="#s6">⑥ 이번 주 뉴스</a></nav>
+<nav><a href="#s1">① 핵심 요약</a><a href="#s2">② 의대 정원·합격선</a><a href="#s3">③ 반도체 계약학과</a><a href="#s4">④ 고교 선택</a><a href="#s5">⑤ 대학</a><a href="#s6">⑥ 진로 조언</a><a href="#s7">⑦ 이번 주 뉴스</a></nav>
 
 <section id="s1"><h2><span class="num">①</span>핵심 요약 — 2031학년도 대입 학생 기준</h2>
  <div class="grid g3" id="kp"></div>
@@ -155,7 +155,19 @@ __DEMO__
  </div>
 </section>
 
-<section id="s3"><h2><span class="num">③</span>고교 선택 — 의대 지망 기준 비교</h2>
+<section id="s3"><h2><span class="num">③</span>반도체 계약학과 정원과 합격선</h2>
+ <div class="grid g2">
+  <div class="card"><h3>2027학년도 모집인원 (수시·정시, 명)</h3><div id="semi-quota" class="chart" style="height:360px"></div>
+   <p class="note"><span style="color:var(--s1)">■</span> 수시 &nbsp;<span style="color:var(--s2)">■</span> 정시 · 학과명 앞 [삼]=삼성전자, [SK]=SK하이닉스</p></div>
+  <div class="card"><h3>정시 합격선 추이 (국수탐 백분위 평균, 70%컷)</h3><div id="semi-trend" class="chart" style="height:360px"></div>
+   <p class="note">2025학년도는 대학들이 비공개. 반도체 평균은 연세·고려·성균관·한양·서강 5개교 기준 · 출처: 종로학원 분석</p></div>
+ </div>
+ <div class="card tbl" style="margin-top:14px"><h3>학과별 모집인원·합격선</h3><table class="num" id="semi-tbl"></table>
+  <p class="note" id="semi-note"></p></div>
+ <div class="card tbl" style="margin-top:14px"><h3>수시 합격선·경쟁률</h3><table id="semi-susi"></table></div>
+</section>
+
+<section id="s4"><h2><span class="num">④</span>고교 선택 — 의대 지망 기준 비교</h2>
  <div class="card tbl"><table><thead><tr><th>유형</th><th>원서 시기</th><th>경쟁률</th><th>의대 적합도</th><th>내신</th><th>장점</th><th>유의점</th></tr></thead><tbody id="types"></tbody></table>
   <p class="note">의대 적합도(★5)는 의·약학 진학 제재, 5등급제 내신 확보 난도, 서울대 지역균형 지원 가능 여부를 종합한 정리입니다. 학생의 성향·성적에 따라 달라질 수 있습니다.</p></div>
  <div class="grid g3" style="margin-top:14px">
@@ -167,18 +179,18 @@ __DEMO__
  </div>
 </section>
 
-<section id="s4"><h2><span class="num">④</span>대학 — 설카포 · 서성한</h2>
- <div class="card tbl"><table><thead><tr><th>대학</th><th>의대</th><th>입시 포인트</th><th>참고 합격선·실적</th></tr></thead><tbody id="univ"></tbody></table></div>
+<section id="s5"><h2><span class="num">⑤</span>대학 — 설카포 · 서성한</h2>
+ <div class="card tbl"><table><thead><tr><th>대학</th><th>의대</th><th>반도체 계약학과</th><th>입시 포인트</th><th>참고 합격선·실적</th></tr></thead><tbody id="univ"></tbody></table></div>
 </section>
 
-<section id="s5"><h2><span class="num">⑤</span>의대 지망 학생을 위한 조언 (서울 학군지·2028년 고1 입학 기준)</h2>
+<section id="s6"><h2><span class="num">⑥</span>의대·반도체 지망 학생을 위한 조언 (서울 학군지·2028년 고1 입학 기준)</h2>
  <div class="grid g2" id="advice"></div>
  <div class="card" style="margin-top:14px"><h3>선택과목 로드맵 (2022 개정 교육과정 · 의예과 지망)</h3>
   <div class="tbl"><table><thead><tr><th>학년</th><th>영역</th><th>과목</th><th>왜</th></tr></thead><tbody id="subj"></tbody></table></div></div>
  <p class="note">이 조언은 공개 자료를 바탕으로 한 일반적 정리입니다. 고교 선택과 과목 편성은 목표 학교의 교육과정 편성표, 대학별 최신 요강, 학교 진학 상담으로 꼭 확인하세요.</p>
 </section>
 
-<section id="s6"><h2><span class="num">⑥</span>이번 주 교육 뉴스 (최근 7일 · 자동 수집)</h2><div class="grid g2" id="news"></div></section>
+<section id="s7"><h2><span class="num">⑦</span>이번 주 교육 뉴스 (최근 7일 · 자동 수집)</h2><div class="grid g2" id="news"></div></section>
 
 <footer><b>출처</b><ul class="tight" id="sources"></ul>
  기사 본문은 싣지 않고 제목과 원문 링크만 제공합니다. 수치는 보도 기준이며 최종 판단은 공식 요강을 확인하세요. · edu_insight.py</footer>
@@ -219,6 +231,28 @@ Plotly.newPlot('cuts',[{type:'bar',orientation:'h',y:cuts.map(c=>c[0]),x:cuts.ma
  text:cuts.map(c=>c[1].toFixed(1)),textposition:'outside',cliponaxis:false,textfont:{color:C.sub,size:11},hovertemplate:'%{y}: %{x:.1f}<extra></extra>'}],
  L({margin:{l:150,r:36,t:8,b:30},xaxis:{range:[93,100],gridcolor:C.grid},yaxis:{gridcolor:'rgba(0,0,0,0)',automargin:true}}),cfg);
 
+// 반도체 계약학과
+const SM=D.semi, tagc=c=>c==='삼성전자'?'[삼]':'[SK]';
+const sm=[...SM].sort((a,b)=>a.m27-b.m27);
+Plotly.newPlot('semi-quota',[
+ {type:'bar',orientation:'h',y:sm.map(r=>tagc(r.corp)+' '+r.short),x:sm.map(r=>r.m27-r.j27),name:'수시',marker:{color:C.s1,line:{color:C.surf,width:1}},hovertemplate:'수시 %{x}명<extra></extra>'},
+ {type:'bar',orientation:'h',y:sm.map(r=>tagc(r.corp)+' '+r.short),x:sm.map(r=>r.j27),name:'정시',marker:{color:C.s2,line:{color:C.surf,width:1}},
+  text:sm.map(r=>r.m27+'명'),textposition:'outside',cliponaxis:false,textfont:{color:C.sub,size:11},hovertemplate:'정시 %{x}명<extra></extra>'}],
+ L({barmode:'stack',margin:{l:96,r:44,t:8,b:30},xaxis:{gridcolor:C.grid,range:[0,115]},yaxis:{gridcolor:'rgba(0,0,0,0)',automargin:true}}),cfg);
+const T=D.semi_trend;
+Plotly.newPlot('semi-trend',[
+ {type:'scatter',mode:'lines+markers+text',x:T.x,y:T.med_local,name:'지방권 의대 평균',connectgaps:true,line:{color:C.s1,width:2},marker:{size:7},
+  text:T.med_local.map(v=>v??''),textposition:'top center',textfont:{color:C.sub,size:11},hovertemplate:'지방권 의대 %{y}<extra></extra>'},
+ {type:'scatter',mode:'lines+markers+text',x:T.x,y:T.semi,name:'반도체 계약학과 5개교 평균',connectgaps:true,line:{color:C.s2,width:2},marker:{size:7},
+  text:T.semi.map(v=>v??''),textposition:'bottom center',textfont:{color:C.sub,size:11},hovertemplate:'반도체 평균 %{y}<extra></extra>'},
+ {type:'scatter',mode:'lines+markers',x:T.x,y:T.korea,name:'고려대 반도체공',connectgaps:false,line:{color:C.s3,width:2,dash:'dot'},marker:{size:6},hovertemplate:'고려대 %{y}<extra></extra>'}],
+ L({showlegend:true,legend:{orientation:'h',y:1.14,x:0},yaxis:{gridcolor:C.grid,range:[93.5,99]},xaxis:{type:'category',gridcolor:'rgba(0,0,0,0)'}}),cfg);
+document.getElementById('semi-tbl').innerHTML='<tr><th>학과</th><th class="l">협약 기업</th><th>2026</th><th>2027</th><th>2027 정시</th><th>2026 정시 70%컷</th><th>2027 수시 경쟁률</th><th class="l">2028 계획</th></tr>'+
+ SM.map(r=>`<tr><td><b>${esc(r.name)}</b></td><td class="l">${esc(r.corp)}</td><td>${r.m26}</td><td>${r.m27}${r.m27!==r.m26?`<small>${r.m27-r.m26}</small>`:''}</td><td>${r.j27||'없음'}</td><td>${r.cut26??'비공개'}</td><td>${esc(r.rate27)}</td><td class="l">${esc(r.y28)}</td></tr>`).join('')+
+ `<tr class="sum"><td>합계 (10개 학과)</td><td></td><td>${SM.reduce((a,r)=>a+r.m26,0)}</td><td>${SM.reduce((a,r)=>a+r.m27,0)}</td><td>${SM.reduce((a,r)=>a+r.j27,0)}</td><td>96.2 (5개교)</td><td>28.5:1 (5개교)</td><td></td></tr>`;
+document.getElementById('semi-note').textContent=D.semi_note;
+document.getElementById('semi-susi').innerHTML='<tr><th>구분</th><th>합격선</th><th>비고</th></tr>'+D.semi_susi.map(([a,b,c])=>`<tr><td><b>${esc(a)}</b></td><td>${esc(b)}</td><td>${esc(c)}</td></tr>`).join('');
+
 // 고교 유형
 const star=n=>'★'.repeat(n)+'<span style="opacity:.25">'+'★'.repeat(5-n)+'</span>';
 document.getElementById('types').innerHTML=D.school_types.map(s=>`<tr><td><b>${esc(s.type)}</b></td><td>${esc(s.when)}</td><td>${esc(s.rate)}</td>
@@ -233,7 +267,7 @@ document.getElementById('jsg').innerHTML=D.jasago.map(([n,t])=>`<tr><td><b>${esc
 
 // 대학
 document.getElementById('univ').innerHTML=D.univs.map(u=>`<tr><td><b>${esc(u.name)}</b><br><span class="pill">${esc(u.group)}</span></td>
- <td>${esc(u.med)}</td><td>${esc(u.points)}</td><td>${esc(u.result)}</td></tr>`).join('');
+ <td>${esc(u.med)}</td><td>${esc(u.semi)}</td><td>${esc(u.points)}</td><td>${esc(u.result)}</td></tr>`).join('');
 
 // 조언
 document.getElementById('advice').innerHTML=D.advice.map(([t,items])=>`<div class="card"><h3>${esc(t)}</h3><ul class="tight">${items.map(i=>`<li>${esc(i)}</li>`).join('')}</ul></div>`).join('');
@@ -277,7 +311,7 @@ def med_table() -> dict:
 def build_data(news: dict, now: dt.datetime) -> dict:
     return {
         "generated": now.strftime("%Y-%m-%d %H:%M KST"), "today": now.strftime("%Y-%m-%d"), "updated": E.UPDATED,
-        "key_points": E.KEY_POINTS, "timeline": E.TIMELINE, "quota": E.QUOTA, "quota_note": E.QUOTA_NOTE, "med_table": med_table(),
+        "key_points": E.KEY_POINTS, "timeline": E.TIMELINE, "quota": E.QUOTA, "quota_note": E.QUOTA_NOTE, "med_table": med_table(), "semi": E.SEMI, "semi_trend": E.SEMI_TREND, "semi_note": E.SEMI_NOTE, "semi_susi": E.SEMI_SUSI,
         "cuts": E.CUTS, "school_types": E.SCHOOL_TYPES, "gifted": E.GIFTED, "gifted_rate": E.GIFTED_RATE,
         "science_seoul": E.SCIENCE_SEOUL, "science_note": E.SCIENCE_NOTE, "jasago": E.JASAGO_NOTE,
         "univs": E.UNIVS, "advice": E.ADVICE, "subjects": E.SUBJECTS, "sources": E.SOURCES, "news": news,
@@ -394,7 +428,40 @@ def render_pdf(d: dict, path: Path) -> Path:
         pg.close()
 
         pno += 1
-        pg = Page(pdf, "③ 고교 선택 · ④ 대학", pno)
+        pg = Page(pdf, "③ 반도체 계약학과 — 정원과 합격선", pno)
+        SM = d["semi"]; T = d["semi_trend"]
+        h = 0.24
+        ax = pg.fig.add_axes([0.17, pg.y - h, 0.3, h - 0.02])
+        sm = sorted(SM, key=lambda r: r["m27"])
+        lab = [("[삼] " if r["corp"] == "삼성전자" else "[SK] ") + r["short"] for r in sm]
+        ax.barh(lab, [r["m27"] - r["j27"] for r in sm], color=S1, label="수시", height=0.6)
+        ax.barh(lab, [r["j27"] for r in sm], left=[r["m27"] - r["j27"] for r in sm], color=S2, label="정시", height=0.6)
+        for i, r in enumerate(sm):
+            ax.text(r["m27"] + 2, i, f"{r['m27']}", va="center", fontsize=6.5, color=SUB)
+        ax.set_xlim(0, 115); ax.set_title("2027 모집인원(명)", loc="left", fontsize=9); ax.tick_params(labelsize=6.5)
+        ax.legend(fontsize=6.5, frameon=False, loc="lower right")
+        ax2 = pg.fig.add_axes([0.6, pg.y - h, 0.35, h - 0.02])
+        for key, lb, col, ls in (("med_local", "지방권 의대 평균", S1, "-"), ("semi", "반도체 5개교 평균", S2, "-"), ("korea", "고려대 반도체공", S3, ":")):
+            pts = [(i, v) for i, v in enumerate(T[key]) if v is not None]
+            ax2.plot([p[0] for p in pts], [p[1] for p in pts], ls, color=col, marker="o", ms=3, label=lb)
+        ax2.set_xticks(range(len(T["x"]))); ax2.set_xticklabels(T["x"])
+        ax2.set_ylim(93.5, 99); ax2.set_title("정시 70%컷 추이(백분위 평균)", loc="left", fontsize=9)
+        ax2.tick_params(labelsize=6.5); ax2.legend(fontsize=6, frameon=False, loc="lower right")
+        pg.y -= h + 0.035
+        pg.t("학과별 (2026 → 2027 모집 · 2027 정시 · 2026 정시 70%컷 · 2027 수시 경쟁률 · 2028 계획)", 9.5, bold=True)
+        for r in SM:
+            pg.t(f"{r['name']} [{r['corp']}]  {r['m26']}→{r['m27']}명 · 정시 {r['j27'] or '없음'} · 70%컷 {r['cut26'] or '비공개'} · 수시 {r['rate27']} · 2028: {r['y28']}",
+                 7.8, ind=0.01, lh=0.0145, w=118)
+        pg.y -= 0.006
+        pg.t("수시 합격선·경쟁률", 9.5, bold=True)
+        for a, b, c in d["semi_susi"]:
+            pg.t(f"{a}: {b} ({c})", 7.8, SUB, ind=0.01, lh=0.0145)
+        pg.y -= 0.006
+        pg.t(d["semi_note"], 7.6, SUB, lh=0.0138, w=110)
+        pg.close()
+
+        pno += 1
+        pg = Page(pdf, "④ 고교 선택 · ⑤ 대학", pno)
         pg.t("고교 유형 비교 (의대 지망 기준, 적합도 ★5)", 10.5, bold=True)
         for s in d["school_types"]:
             pg.t(f"{s['type']}  {'★' * s['fit']}{'☆' * (5 - s['fit'])}  · {s['when']} · {s['rate']}", 8.8, bold=True)
@@ -408,13 +475,14 @@ def render_pdf(d: dict, path: Path) -> Path:
         pg.t("대학 — 설카포 · 서성한", 10.5, bold=True)
         for u in d["univs"]:
             pg.t(f"{u['name']} ({u['group']}) · {u['med']}", 8.8, bold=True)
+            pg.t("반도체 계약학과: " + u["semi"], 7.8, SUB, ind=0.02, lh=0.014, w=102)
             pg.t(u["points"], 7.8, SUB, ind=0.02, lh=0.014, w=102)
             pg.t(u["result"], 7.8, MUTED, ind=0.02, lh=0.014, w=102)
             pg.y -= 0.003
         pg.close()
 
         pno += 1
-        pg = Page(pdf, "⑤ 의대 지망 학생 조언 · 선택과목", pno)
+        pg = Page(pdf, "⑥ 의대·반도체 지망 학생 조언 · 선택과목", pno)
         for title, items in d["advice"]:
             pg.t("■ " + title, 9.5, S1, bold=True)
             for i in items:
@@ -427,10 +495,10 @@ def render_pdf(d: dict, path: Path) -> Path:
         pg.close()
 
         pno += 1
-        pg = Page(pdf, "⑥ 이번 주 교육 뉴스 (최근 7일)", pno)
+        pg = Page(pdf, "⑦ 이번 주 교육 뉴스 (최근 7일)", pno)
         for lab, items in d["news"].items():
             if pg.y < 0.12:
-                pg.close(); pno += 1; pg = Page(pdf, "⑥ 이번 주 교육 뉴스 (계속)", pno)
+                pg.close(); pno += 1; pg = Page(pdf, "⑦ 이번 주 교육 뉴스 (계속)", pno)
             pg.t(f"■ {lab}", 9.5, S1, bold=True)
             for n in items[:6] or [{"title": "이번 주 기사 없음", "link": "", "source": "", "date": ""}]:
                 pg.t(f"· {n['title']}  ({n['source']} {n['date']})", 8, ind=0.01, lh=0.0145, w=104, url=n["link"] or None)

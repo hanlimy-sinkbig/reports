@@ -117,6 +117,9 @@ table{width:100%;border-collapse:collapse;font-size:13.5px}
 th,td{padding:8px;border-bottom:1px solid var(--border);text-align:left;vertical-align:top}
 th{color:var(--text-secondary);font-weight:600;font-size:12.5px;white-space:nowrap}
 .tbl{overflow-x:auto}
+table.num th,table.num td{text-align:right;white-space:nowrap;padding:6px 5px}table.num th:first-child,table.num td:first-child{text-align:left}
+table.num td small{color:var(--s2);font-size:11px;margin-left:2px}table.num tr.sum td{font-weight:700;border-top:2px solid var(--border)}
+table.num tr.grp td{color:var(--text-muted);font-size:12px;text-align:left;padding-top:10px}
 .stars{color:var(--accent);letter-spacing:1px;white-space:nowrap}
 .chart{width:100%;height:330px}
 ul.tight{margin:0;padding-left:18px} ul.tight li{margin:4px 0}
@@ -143,7 +146,10 @@ __DEMO__
 
 <section id="s2"><h2><span class="num">②</span>의대 정원과 합격선</h2>
  <div class="grid g2">
-  <div class="card"><h3>의대 정원 계획 (명)</h3><div id="quota" class="chart"></div><p class="note" id="quota-note"></p></div>
+  <div class="card"><h3>의대 정원 계획 (명)</h3><div id="quota" class="chart"></div><p class="note" id="quota-note"></p>
+   <h3 style="margin-top:16px">권역별 의대 정원 (명)</h3><div class="tbl"><table class="num" id="quota-region"></table></div>
+   <h3 style="margin-top:16px">주요 대학 의대 정원 (명)</h3><div class="tbl"><table class="num" id="quota-univ"></table></div>
+   <p class="note" id="quota-tbl-note"></p></div>
   <div class="card"><h3>2026학년도 정시 합격선 (국수탐 백분위 평균, 70%컷)</h3><div id="cuts" class="chart"></div>
    <p class="note"><span style="color:var(--s1)">■</span> 의대 &nbsp;<span style="color:var(--s2)">■</span> 반도체 계약학과 &nbsp;<span style="color:var(--s3)">■</span> 서울대 자연계 · 출처: 종로학원 분석(어디가 공개 자료)</p></div>
  </div>
@@ -199,6 +205,12 @@ Plotly.newPlot('quota',[
   text:Q.regional.map(v=>v?'+'+v:''),textposition:'outside',cliponaxis:false,textfont:{color:C.sub},hovertemplate:'지역의사 +%{y:,}명<extra></extra>'}],
  L({barmode:'stack',showlegend:true,legend:{orientation:'h',y:1.12,x:0},yaxis:{gridcolor:C.grid,range:[0,4300],tickformat:','}}),cfg);
 document.getElementById('quota-note').textContent=D.quota_note;
+const MT=D.med_table, yh='<tr><th></th>'+MT.years.map(y=>`<th>${y}</th>`).join('')+'</tr>';
+const cell=(v,inc)=>`<td>${v.toLocaleString()}${inc?`<small>+${inc}</small>`:''}</td>`;
+document.getElementById('quota-region').innerHTML=yh+MT.regions.map(r=>`<tr class="${r.sum?'sum':''}"><td>${esc(r.name)}</td>${r.vals.map((v,i)=>cell(v,r.inc[i])).join('')}</tr>`).join('');
+let lastG='';document.getElementById('quota-univ').innerHTML=yh+MT.univs.map(u=>{const g=u.group!==lastG?`<tr class="grp"><td colspan="${MT.years.length+1}">${esc(u.group)}</td></tr>`:'';lastG=u.group;
+ return g+`<tr><td>${esc(u.name)}</td>${u.vals.map((v,i)=>cell(v,u.inc[i])).join('')}</tr>`}).join('');
+document.getElementById('quota-tbl-note').textContent=MT.note;
 
 // 합격선
 const cuts=[...D.cuts].sort((a,b)=>a[1]-b[1]);
@@ -235,10 +247,37 @@ document.getElementById('sources').innerHTML=D.sources.map(([t,u])=>`<li><a href
 """
 
 
+def med_table() -> dict:
+    """대학별 정원(edu_data.MED_SCHOOLS)에서 2026~2031 권역·주요 대학 표를 만든다."""
+    years = E.QUOTA["x"]
+
+    def series(base, i27, i28):
+        inc = [0 if y == "2026" else (i27 if y == "2027" else i28) for y in years]
+        return [base + i for i in inc], inc
+
+    regions = []
+    for key, label in (("서울", "서울권"), ("경인", "경인권"), ("지방", "지방권")):
+        rows = [v for v in E.MED_SCHOOLS.values() if v[0] == key]
+        vals, inc = series(sum(r[1] for r in rows), sum(r[2] for r in rows), sum(r[3] for r in rows))
+        regions.append({"name": f"{label} ({len(rows)}개교)", "vals": vals, "inc": inc})
+    new = [E.NEW_MED_2030 if int(y) >= 2030 else 0 for y in years]
+    regions.append({"name": "공공·신설 의대", "vals": new, "inc": [0] * len(years)})
+    tot = [sum(r["vals"][i] for r in regions) for i in range(len(years))]
+    regions.append({"name": "전국 합계", "vals": tot, "inc": [t - tot[0] for t in tot], "sum": True})
+
+    grp = {"서울": "서울권", "경인": "경인권", "지방": "지방권"}
+    univs = []
+    for n in sorted(E.MED_FEATURED, key=lambda n: ["서울", "경인", "지방"].index(E.MED_SCHOOLS[n][0])):
+        reg, b, i27, i28 = E.MED_SCHOOLS[n]
+        vals, inc = series(b, i27, i28)
+        univs.append({"name": n, "group": grp[reg], "vals": vals, "inc": inc})
+    return {"years": years, "regions": regions, "univs": univs, "note": E.MED_TABLE_NOTE}
+
+
 def build_data(news: dict, now: dt.datetime) -> dict:
     return {
         "generated": now.strftime("%Y-%m-%d %H:%M KST"), "today": now.strftime("%Y-%m-%d"), "updated": E.UPDATED,
-        "key_points": E.KEY_POINTS, "timeline": E.TIMELINE, "quota": E.QUOTA, "quota_note": E.QUOTA_NOTE,
+        "key_points": E.KEY_POINTS, "timeline": E.TIMELINE, "quota": E.QUOTA, "quota_note": E.QUOTA_NOTE, "med_table": med_table(),
         "cuts": E.CUTS, "school_types": E.SCHOOL_TYPES, "gifted": E.GIFTED, "gifted_rate": E.GIFTED_RATE,
         "science_seoul": E.SCIENCE_SEOUL, "science_note": E.SCIENCE_NOTE, "jasago": E.JASAGO_NOTE,
         "univs": E.UNIVS, "advice": E.ADVICE, "subjects": E.SUBJECTS, "sources": E.SOURCES, "news": news,
@@ -326,6 +365,32 @@ def render_pdf(d: dict, path: Path) -> Path:
         cuts = sorted(d["cuts"], key=lambda c: c[1])
         ax2.barh([c[0] for c in cuts], [c[1] for c in cuts], color=[{"med": S1, "semi": S2, "eng": S3}[c[2]] for c in cuts], height=0.6)
         ax2.set_xlim(93, 100); ax2.set_title("2026 정시 70%컷(백분위)", loc="left", fontsize=9); ax2.tick_params(labelsize=6.5)
+        pg.close()
+
+        pno += 1
+        pg = Page(pdf, "② 의대 정원 — 권역·주요 대학 (2026~2031학년도)", pno)
+        MT = d["med_table"]
+        cols = [0.27 + i * 0.115 for i in range(len(MT["years"]))]
+
+        def row(name, vals, inc, bold=False, color=TEXT):
+            pg.fig.text(0.06, pg.y, name, fontsize=8.2, color=color, weight="bold" if bold else "normal", va="top")
+            for x, v, i in zip(cols, vals, inc):
+                pg.fig.text(x + 0.07, pg.y, f"{v:,}" + (f" (+{i})" if i else ""), fontsize=8.2, color=color,
+                            weight="bold" if bold else "normal", va="top", ha="right")
+            pg.y -= 0.019
+
+        for title, rows in (("권역별 의대 정원(명)", MT["regions"]), ("주요 대학 의대 정원(명)", MT["univs"])):
+            pg.t(title, 10, bold=True)
+            for x, y in zip(cols, MT["years"]):
+                pg.fig.text(x + 0.07, pg.y, y, fontsize=8, color=SUB, va="top", ha="right", weight="bold")
+            pg.y -= 0.019
+            last = ""
+            for r in rows:
+                if r.get("group") and r["group"] != last:
+                    pg.t(r["group"], 7.8, MUTED, bold=True); last = r["group"]
+                row(r["name"], r["vals"], r["inc"], bold=r.get("sum", False))
+            pg.y -= 0.012
+        pg.t(MT["note"], 7.6, SUB, lh=0.0138, w=110)
         pg.close()
 
         pno += 1

@@ -291,7 +291,328 @@ def llm_brief(top: list[dict]) -> list[str] | None:
         return None
 
 
-def analyze(items: list[dict], history: dict, seen: dict, now: dt.datetime, use_llm=True) -> dict:
+# ---------------------------------------------------------------------------
+# 3-2. 주간 흐름 (최근 7일 이야기를 날짜를 넘어 묶고, 오늘 뉴스와 연결)
+# ---------------------------------------------------------------------------
+WEEK_DAYS = 7
+STORIES_KEEP_D = 14       # stories.json 보관 기간
+STORIES_PER_DAY = 40      # 하루에 저장하는 이야기 수(점수 순)
+FRESH_H = 24              # 직전 실행 이후(24시간 안) 기사가 있어야 '그날 다뤄졌다'고 봄 (수집 창 36시간 겹침 보정)
+
+# 한국어 제목을 영어 제목과 잇기 위한 간단한 대응표 (앞부분 일치)
+KO_ALIAS = [("엔비디아", "nvidia"), ("젠슨", "huang"), ("오픈", "openai"), ("앤트로픽", "anthropic"), ("클로드", "claude"),
+            ("구글", "google"), ("제미나이", "gemini"), ("딥마인드", "deepmind"), ("메타", "meta"), ("애플", "apple"),
+            ("마이크로소프트", "microsoft"), ("아마존", "amazon"), ("딥시크", "deepseek"), ("월렛", "wallet"),
+            ("상장", "ipo"), ("기업공개", "ipo"), ("소송", "lawsuit"), ("규제", "regulation"), ("에이전트", "agent"),
+            ("반도체", "chip"), ("데이터센터", "datacenter"), ("삼성", "samsung"), ("네이버", "naver"), ("카카오", "kakao"),
+            ("하이닉스", "hynix"), ("수출", "export"), ("중국", "china"), ("결제", "payment"), ("사임", "exit"), ("퇴진", "exit")]
+_KO_JOSA = ("에서", "으로", "은", "는", "이", "가", "을", "를", "의", "에", "도", "로", "과", "와")
+_FLOW_STOP = set("stock market today news week report could would should here what's s just now".split())
+
+
+def _norm(w: str) -> str | None:
+    w = w.strip(".-")
+    if re.fullmatch(r"[\d\.\-$]+", w) or w in _FLOW_STOP:
+        return None
+    if re.match(r"[a-z]", w):
+        if len(w) > 4 and w.endswith("s") and not w.endswith("ss"):
+            w = w[:-1]
+        return w
+    for k, v in KO_ALIAS:
+        if w.startswith(k):
+            return v
+    for j in _KO_JOSA:
+        if len(w) >= len(j) + 2 and w.endswith(j):
+            return w[: -len(j)]
+    return w
+
+
+def flow_tokens(st: dict, title_only: bool = False) -> set[str]:
+    out = set()
+    for t in [st["title"]] + ([] if title_only else st.get("alt", [])):
+        for w in tokens(t):
+            n = _norm(w)
+            if n:
+                out.add(n)
+    return out
+
+
+def story_record(c: dict, run_at: dt.datetime) -> dict:
+    """하루치 묶음(cluster) → 날짜를 넘어 비교할 이야기 기록"""
+    items = c["items"]
+    fresh_cut = (run_at - dt.timedelta(hours=FRESH_H)).isoformat()
+    lead = c["lead"]
+    others = [i for i in items if i["link"] != lead["link"]]
+    return {"title": lead["title"], "link": lead["link"], "source": lead["source"], "category": c["category"],
+            "entities": c["entities"], "n_sources": c["n_sources"], "score": c["score"],
+            "sources": sorted({i["source"] for i in items}),
+            "fresh": sum(1 for i in items if (i.get("published") or "9") >= fresh_cut),
+            "alt": [i["title"] for i in others[:4]],
+            "links": [{"title": i["title"], "source": i["source"], "link": i["link"]} for i in [lead] + others[:2]]}
+
+
+def bootstrap_stories(out: Path, stories: dict, now: dt.datetime) -> dict:
+    """stories.json 에 없는 지난 날짜는 archive/*.html 안의 데이터(const D)로 채움 → 첫 실행부터 주간 분석 가능"""
+    for k in range(1, WEEK_DAYS):
+        d = (now - dt.timedelta(days=k)).strftime("%Y-%m-%d")
+        if d in stories:
+            continue
+        for p in sorted((out / "archive").glob(f"{d}_*.html")):
+            if "_demo" in p.name:
+                continue
+            try:
+                m = re.search(r"const D = (\{.*?\});\nconst css", p.read_text(encoding="utf-8"), re.S)
+                D = json.loads(m.group(1).replace("<\\/", "</"))
+                run_at = dt.datetime.strptime(D["generated"][:16], "%Y-%m-%d %H:%M").replace(tzinfo=KST)
+                cl = [c for cs in D["by_cat"].values() for c in cs]
+                cl.sort(key=lambda c: -c["score"])
+                stories[d] = [story_record(c, run_at) for c in cl[:STORIES_PER_DAY]]
+                log(f"주간 기록 보충 · {d} ({len(stories[d])}개, {p.name})")
+            except Exception as e:
+                log(f"주간 기록 보충 실패 · {p.name}: {e}")
+            break
+    return stories
+
+
+_GENERIC = set("인공지능 생성형 기업 세계 지원 활용 업무 영향 개발 수행 수준 공개 출시 모델 미국 기술 서비스 시장 전망 국내 글로벌 "
+               "도입 강화 최초 발표 기반 국가 산업 시대 정부 ceo model test you my us other know face ahead buy price firm "
+               "risk investor launche launch top big first year next one two may artificial intelligence".split())
+_ENT_TOK = {"openai": "OpenAI", "gpt": "OpenAI", "chatgpt": "OpenAI", "anthropic": "Anthropic", "claude": "Anthropic",
+            "google": "Google", "gemini": "Google", "deepmind": "Google", "alphabet": "Google", "meta": "Meta",
+            "llama": "Meta", "microsoft": "Microsoft", "copilot": "Microsoft", "nvidia": "NVIDIA", "apple": "Apple",
+            "amazon": "Amazon", "aws": "Amazon", "xai": "xAI", "grok": "xAI", "deepseek": "DeepSeek",
+            "samsung": "삼성", "naver": "네이버", "kakao": "카카오"}
+
+
+def _themes(pool: list[dict]) -> list[list[dict]]:
+    """1단계: 여러 이야기에 함께 나오는 '핵심어 쌍'(예: nvidia+huang, anthropic+ipo)으로 큰 사건 묶기"""
+    import math
+    from itertools import combinations
+    N = len(pool)
+    df: dict[str, int] = {}
+    for st in pool:
+        st["ct"] = {w for w in st["tk"] if w not in _GENERIC}                       # 제목+같은 이야기 다른 제목
+        st["tt"] = {w for w in flow_tokens(st, title_only=True) if w not in _GENERIC}  # 대표 제목만
+        for w in st["ct"]:
+            df[w] = df.get(w, 0) + 1
+    left = list(range(N))
+    groups = []
+    while True:
+        sup: dict[tuple, list[int]] = {}
+        for i in left:
+            ws = sorted(w for w in pool[i]["tt"] if df.get(w, 0) >= 3)
+            for a, b in combinations(ws, 2):
+                if a in _ENT_TOK and b in _ENT_TOK:          # 기업끼리 쌍(OpenAI+Google 등)은 사건이 아님
+                    continue
+                if _ENT_TOK.get(a, a) == _ENT_TOK.get(b, b):
+                    continue
+                sup.setdefault((a, b), []).append(i)
+        best, best_v = None, 0.0
+        for pr, idx in sup.items():
+            if len(idx) < 3 or len({pool[i]["source"] for i in idx}) < 2:
+                continue
+            lift = len(idx) * N / (df[pr[0]] * df[pr[1]])
+            if lift < 1.5:
+                continue
+            v = len(idx) * math.log(lift) + sum(pool[i]["n_sources"] for i in idx) * 0.1
+            if v > best_v:
+                best, best_v = pr, v
+        if best is None:
+            break
+        members = set(sup[best])
+        # 사건에 집중된 단어(이 묶음에 75% 이상 몰린 단어)를 가진 이야기도 합류 (예: '젠슨 황' 한국어 기사)
+        cnt: dict[str, int] = {}
+        for i in members:
+            for w in pool[i]["ct"]:
+                cnt[w] = cnt.get(w, 0) + 1
+        core = {w for w, n in cnt.items() if n >= 3 and n / df[w] >= 0.6 and w not in _ENT_TOK}
+        hook = {w for w in best if w not in _ENT_TOK} | core      # 기업명 하나만으로는 합류시키지 않음
+        for i in left:
+            tt = pool[i]["tt"]
+            if i not in members and tt & hook and (len(tt & (hook | set(best))) >= 2 or tt & (set(best) - set(_ENT_TOK))):
+                members.add(i)
+        groups.append(([pool[i] for i in sorted(members)], list(best) + sorted(core - set(best), key=lambda w: -cnt.get(w, 0))[:2]))
+        left = [i for i in left if i not in members]
+    return groups, [pool[i] for i in left]
+
+
+def build_threads(stories: dict, days: list[str]) -> list[dict]:
+    """여러 날의 이야기를 '흐름'으로 묶기: ① 핵심어 쌍으로 큰 사건 ② 나머지는 제목 단어 겹침"""
+    pool = []
+    for d in days:
+        for st in stories.get(d, []):
+            pool.append(dict(st, date=d, tk=flow_tokens(st), ents=set(st["entities"])))
+    if not pool:
+        return []
+    import math
+    groups, rest = _themes(pool)
+    df: dict[str, int] = {}
+    for st in rest:
+        for w in st["tk"]:
+            df[w] = df.get(w, 0) + 1
+    N = len(rest) or 1
+    idf = {w: math.log((N + 1) / (n + 0.5)) for w, n in df.items()}
+
+    def sim(a, b):
+        sh = a["tk"] & b["tk"]
+        if len(sh) < 3:
+            return 0.0
+        s = sum(idf[x] for x in sh) / max(1e-9, min(sum(idf[x] for x in a["tk"]), sum(idf[x] for x in b["tk"])))
+        return s if s >= 0.4 or (s >= 0.3 and a["ents"] & b["ents"]) else 0.0
+
+    small: list[list[dict]] = []
+    for st in sorted(rest, key=lambda s: (s["date"], -s["score"])):
+        best, best_s = None, 0.0
+        for g in small:
+            sc = max(sim(st, m) for m in g)
+            if sc > best_s:
+                best, best_s = g, sc
+        if best is not None:
+            best.append(st)
+        else:
+            small.append([st])
+
+    threads = [{"members": ms, "keywords": kw} for ms, kw in groups] + [{"members": ms, "keywords": []} for ms in small]
+    for th in threads:
+        ms = th["members"]
+        per_day: dict[str, float] = {}
+        for m in ms:
+            if m["fresh"] > 0 or m["date"] == days[-1]:
+                per_day[m["date"]] = per_day.get(m["date"], 0) + m["score"]
+        kw = set(th["keywords"][:2])
+        lead = max(ms, key=lambda m: (kw <= m.get("tt", m["tk"]), m["n_sources"], m["score"], m["date"]))
+        srcs = {s for m in ms for s in m["sources"]}
+        ranked = sorted(ms, key=lambda m: (m["date"], m["score"]), reverse=True)
+        th.update({
+            "title": lead["title"], "link": lead["link"], "category": lead["category"],
+            "entities": sorted({e for m in ms for e in m["entities"]}),
+            "days": sorted(per_day), "series": [round(per_day.get(d, 0)) for d in days],
+            "n_sources": len(srcs), "n_stories": len(ms),
+            "first": min(per_day) if per_day else ms[0]["date"], "last": max(per_day) if per_day else ms[-1]["date"],
+            "peak": max(per_day.values()) if per_day else 0,
+            "links": [dict(m["links"][0], date=m["date"]) for m in ranked if m["link"] != lead["link"]][:5],
+            "keys": [m["date"] + "|" + m["link"] for m in ms],
+        })
+        # 임팩트 = 매체 폭 + 지속 일수 + 최고 화제도 (하루 반짝보다 여러 날 이어진 이야기를 우대)
+        th["impact"] = round(th["n_sources"] * 2 + len(th["days"]) * 4 + th["peak"] * 0.5, 1)
+        del th["members"]
+    threads.sort(key=lambda t: -t["impact"])
+    return threads
+
+
+def relate(th: dict, days: list[str]) -> dict:
+    """한 흐름의 오늘 상태: 새 흐름 / 확대 / 지속 / 축소 / 재부상 / 잠잠"""
+    today, yday = days[-1], days[-2] if len(days) > 1 else None
+    s = dict(zip(days, th["series"]))
+    prev = [s[d] for d in th["days"] if d != today]
+    if today not in th["days"]:
+        return {"status": "잠잠", "note": f"{th['last'][5:].replace('-', '/')} 이후 소식 없음"}
+    if not prev:
+        return {"status": "새 흐름", "note": "오늘 처음 등장"}
+    n = len(th["days"])
+    if yday not in th["days"]:
+        return {"status": "재부상", "note": f"{th['days'][-2][5:].replace('-', '/')} 이후 다시 등장 · {n}일째"}
+    avg = sum(prev) / len(prev)
+    r = s[today] / max(1, avg)
+    if r >= 1.3:
+        return {"status": "확대", "note": f"{n}일째 · 화제도 {s[today]} (이전 평균 {avg:.0f})"}
+    if r <= 0.7:
+        return {"status": "축소", "note": f"{n}일째 · 화제도 {s[today]} (이전 평균 {avg:.0f})"}
+    return {"status": "지속", "note": f"{n}일째 · 화제도 {s[today]}"}
+
+
+def _short(t: str, n: int = 60) -> str:
+    return t if len(t) <= n else t[: n - 1].rstrip() + "…"
+
+
+def weekly_flow(stories: dict, history: dict, now: dt.datetime) -> dict:
+    today = now.strftime("%Y-%m-%d")
+    days = [(now - dt.timedelta(days=k)).strftime("%Y-%m-%d") for k in range(WEEK_DAYS - 1, -1, -1)]
+    days = [d for d in days if d in stories]
+    threads = build_threads(stories, days)
+    if not threads:
+        return {}
+    for th in threads:
+        th.update(relate(th, days))
+    top = [t for t in threads if len(t["days"]) >= 2 or t["n_sources"] >= 4][:7] or threads[:7]
+
+    # 오늘 이야기 → 어떤 흐름에 속하는지
+    today_map = {}
+    for th in threads:
+        for k in th.pop("keys"):
+            if k.startswith(today + "|"):
+                today_map[k.split("|", 1)[1]] = th
+    # 기업 언급 모멘텀: 오늘 vs 이전 날 평균
+    prev_days = [d for d in sorted(history) if d < today][-(WEEK_DAYS - 1):]
+    mom = []
+    if today in history and prev_days:
+        for e, n in history[today]["entities"].items():
+            avg = sum(history[d]["entities"].get(e, 0) for d in prev_days) / len(prev_days)
+            if n or avg:
+                mom.append({"name": e, "today": n, "avg": round(avg, 1), "delta": round(n - avg, 1)})
+        mom.sort(key=lambda m: -abs(m["delta"]))
+    cat_share = {}
+    if today in history and prev_days:
+        tot_t = max(1, sum(history[today]["categories"].values()))
+        for c in CAT_DISPLAY:
+            pw = sum(history[d]["categories"].get(c, 0) for d in prev_days)
+            tw = max(1, sum(sum(history[d]["categories"].values()) for d in prev_days))
+            cat_share[c] = {"today": round(100 * history[today]["categories"].get(c, 0) / tot_t),
+                            "week": round(100 * pw / tw)}
+
+    # 규칙 기반 흐름 해설 (API 키 없어도 동작)
+    ins = []
+    if top:
+        t0 = top[0]
+        ins.append(f"이번 주 가장 큰 흐름은 「{_short(t0['title'])}」 — {len(t0['days'])}일 동안 {t0['n_sources']}개 매체가 다뤘고, "
+                   f"오늘은 '{t0['status']}' 상태입니다.")
+    if len(top) > 2:
+        ins.append("그 밖의 주간 핵심: " + ", ".join(f"「{_short(t['title'], 45)}」({len(t['days'])}일·{t['status']})" for t in top[1:3]) + ".")
+    shown = [id(t) for t in top[:3]]
+    grow = [t for t in threads if t["status"] in ("확대", "재부상") and id(t) not in shown and t["n_sources"] >= 3][:2]
+    for t in grow:
+        ins.append(f"{'다시 떠오른' if t['status'] == '재부상' else '오늘 커진'} 흐름: 「{_short(t['title'])}」 ({t['note']}).")
+    newt = [t for t in threads if t["status"] == "새 흐름" and t["n_sources"] >= 2][:2]
+    for t in newt:
+        ins.append(f"오늘 새로 등장: 「{_short(t['title'])}」 ({t['n_sources']}개 매체). 주간 흐름과 별개의 새 이슈입니다.")
+    quiet = [t for t in top if t["status"] == "잠잠"][:2]
+    for t in quiet:
+        ins.append(f"잠잠해진 흐름: 「{_short(t['title'])}」 — {t['note']}.")
+    ups = [m for m in mom if m["delta"] >= 2][:2]
+    downs = [m for m in mom if m["delta"] <= -2][:2]
+    if ups or downs:
+        ins.append("언급 변화: " + ", ".join([f"{m['name']} ▲ (오늘 {m['today']} / 평균 {m['avg']:g})" for m in ups] +
+                                          [f"{m['name']} ▼ (오늘 {m['today']} / 평균 {m['avg']:g})" for m in downs]) + ".")
+    return {"days": days, "n_days": len(days), "top": top, "momentum": mom[:10],
+            "cat_share": cat_share, "insights": ins, "llm": None, "_map": today_map}
+
+
+def llm_flow(wk: dict, top_today: list[dict]) -> list[str] | None:
+    key = os.environ.get("ANTHROPIC_API_KEY")
+    if not key or requests is None or not wk:
+        return None
+    week = "\n".join(f"- {t['title']} | {len(t['days'])}일, {t['n_sources']}개 매체, 일별 화제도 {t['series']}, 오늘 상태: {t['status']}"
+                     for t in wk["top"])
+    today = "\n".join(f"- {c['lead']['title']} ({c['n_sources']}개 매체)" for c in top_today[:10])
+    prompt = ("최근 7일 AI 뉴스의 주요 흐름(헤드라인 기준)과 오늘 헤드라인입니다.\n[주간 흐름]\n" + week + "\n\n[오늘]\n" + today +
+              "\n\n헤드라인만 근거로, 오늘 뉴스가 이번 주 흐름과 어떻게 이어지는지 또는 흐름이 어떻게 달라졌는지(새 국면, 확대, "
+              "진정, 반전)를 한국어로 4~5개, 각 90자 이내 '- ' 목록으로 쓰세요. 헤드라인에 없는 사실은 추측하지 마세요.")
+    try:
+        r = requests.post("https://api.anthropic.com/v1/messages", timeout=60, headers={
+            "x-api-key": key, "anthropic-version": "2023-06-01", "content-type": "application/json"},
+            json={"model": os.environ.get("BRIEF_LLM_MODEL", "claude-sonnet-5-5"), "max_tokens": 800,
+                  "messages": [{"role": "user", "content": prompt}]})
+        r.raise_for_status()
+        text = "".join(b.get("text", "") for b in r.json().get("content", []))
+        lines = [re.sub(r"^\s*[-•]\s*", "", l).strip() for l in text.splitlines() if l.strip().startswith(("-", "•"))]
+        return lines[:5] or None
+    except Exception as e:
+        log(f"AI 흐름 분석 실패: {e}")
+        return None
+
+
+def analyze(items: list[dict], history: dict, seen: dict, now: dt.datetime, use_llm=True,
+            stories: dict | None = None) -> dict:
     today = now.strftime("%Y-%m-%d")
     for it in items:
         it["category"] = categorize(it)
@@ -322,8 +643,23 @@ def analyze(items: list[dict], history: dict, seen: dict, now: dt.datetime, use_
     for c in clusters:
         by_cat[c["category"]].append(c)
 
+    wk = {}
+    if stories is not None:
+        stories[today] = [story_record(c, now) for c in sorted(clusters, key=lambda c: -c["score"])[:STORIES_PER_DAY]]
+        for d in sorted(stories)[:-STORIES_KEEP_D]:
+            stories.pop(d)
+        wk = weekly_flow(stories, history, now)
+        mp = wk.pop("_map", {}) if wk else {}
+        for c in clusters:
+            th = mp.get(c["lead"]["link"])
+            if th and len(th["days"]) >= 2:
+                c["flow"] = {"status": th["status"], "days": len(th["days"]), "thread": th["title"], "note": th["note"]}
+        if wk and use_llm:
+            wk["llm"] = llm_flow(wk, clusters[:10])
+
     top = clusters[:10]
     return {
+        "weekly": wk,
         "today": today, "generated": now.strftime("%Y-%m-%d %H:%M KST"),
         "n_articles": len(news), "n_stories": len(clusters), "n_official": len(official),
         "n_new": sum(1 for c in clusters if any(i["new"] for i in c["items"])),
@@ -374,12 +710,23 @@ section{margin-top:26px} h2{font-size:19px;margin:0 0 12px} h2 .num{color:var(--
 .tabs button{font:inherit;font-size:13px;padding:6px 12px;border-radius:999px;border:1px solid var(--border);background:var(--surface-1);color:var(--text-secondary);cursor:pointer}
 .tabs button.on{background:var(--accent);border-color:var(--accent);color:#fff}
 .muted{color:var(--text-muted);font-size:12.5px}
+.flow{display:inline-block;font-size:11px;font-weight:650;padding:0 7px;border-radius:4px;margin-right:6px;vertical-align:1px;border:1px solid currentColor}
+.st-확대{color:var(--new)} .st-새{color:var(--accent)} .st-지속{color:var(--s3)} .st-재부상{color:var(--s6)} .st-축소,.st-잠잠{color:var(--text-muted)}
+.insight li{margin:6px 0}
+.strip{display:inline-flex;gap:3px;vertical-align:middle;margin-left:4px}
+.strip i{display:inline-block;width:16px;height:10px;border-radius:2px;background:var(--accent)}
+.strip i.off{background:var(--grid)}
+.kw{display:inline-block;font-size:11px;padding:0 6px;border-radius:4px;background:var(--grid);color:var(--text-secondary);margin-right:3px}
+table.mom{border-collapse:collapse;width:100%;font-size:13.5px;font-variant-numeric:tabular-nums}
+table.mom td,table.mom th{padding:5px 6px;border-bottom:1px solid var(--border);text-align:right}
+table.mom td:first-child,table.mom th:first-child{text-align:left} table.mom th{color:var(--text-secondary);font-weight:500;font-size:12px}
+.up{color:var(--new)} .down{color:var(--accent)}
 footer{margin-top:40px;color:var(--text-muted);font-size:12px}
 </style></head><body><div class="wrap">
 <header><h1>AI 뉴스 대시보드</h1>
 <div class="meta">생성 __GENERATED__ · 최근 36시간 뉴스 · 공식 블로그 최근 7일 · <a href="latest.pdf">PDF</a> · <a href="archive/">지난 대시보드</a></div></header>
 __DEMO__
-<nav><a href="#s1">① 오늘의 핵심</a><a href="#s2">② 숫자로 보는 오늘</a><a href="#s3">③ 분야별 뉴스</a><a href="#s4">④ 공식 발표</a></nav>
+<nav><a href="#s1">① 오늘의 핵심</a><a href="#sw">② 이번 주 흐름</a><a href="#s2">③ 숫자로 보는 오늘</a><a href="#s3">④ 분야별 뉴스</a><a href="#s4">⑤ 공식 발표</a></nav>
 
 <section id="s1"><h2><span class="num">①</span>오늘의 핵심</h2>
  <div class="tiles" id="tiles"></div>
@@ -388,7 +735,16 @@ __DEMO__
  <div class="card"><h3>가장 많이 다뤄진 이야기 TOP 10</h3><div id="top"></div></div>
 </section>
 
-<section id="s2"><h2><span class="num">②</span>숫자로 보는 오늘</h2>
+<section id="sw"><h2><span class="num">②</span>이번 주 흐름 <span class="muted" id="wk-range"></span></h2>
+ <div class="card" style="margin-bottom:14px"><h3>오늘 뉴스는 이번 주 흐름과 어떻게 이어지나</h3><ul class="insight" id="wk-ins" style="margin:0;padding-left:18px"></ul>
+  <p class="muted" id="wk-ins-note" style="margin:6px 0 0"></p></div>
+ <div class="card" style="margin-bottom:14px"><h3>이번 주 가장 임팩트 있는 흐름</h3><div id="wk-top"></div>
+  <p class="muted" style="margin:8px 0 0">임팩트 = 다룬 매체 수 × 2 + 이어진 날 수 × 4 + 하루 최고 화제도 × 0.5 · 막대는 날짜별 화제도(진할수록 많이 다룸) ·
+  상태: <span class="flow st-새">새 흐름</span><span class="flow st-확대">확대</span><span class="flow st-지속">지속</span><span class="flow st-재부상">재부상</span><span class="flow st-축소">축소</span><span class="flow st-잠잠">잠잠</span></p></div>
+ <div class="card"><h3>기업 언급 변화 (오늘 vs 이전 날 평균)</h3><div id="wk-mom"></div></div>
+</section>
+
+<section id="s2"><h2><span class="num">③</span>숫자로 보는 오늘</h2>
  <div class="grid g2">
   <div class="card"><h3>기업·모델 언급 (이야기 수 기준)</h3><div id="ent" class="chart"></div></div>
   <div class="card"><h3>분야별 이야기 수</h3><div id="cat" class="chart"></div></div>
@@ -397,11 +753,11 @@ __DEMO__
   <div class="muted" id="trend-legend"></div></div>
 </section>
 
-<section id="s3"><h2><span class="num">③</span>분야별 뉴스</h2>
+<section id="s3"><h2><span class="num">④</span>분야별 뉴스</h2>
  <div class="card"><div class="tabs" id="tabs"></div><div id="catlist"></div></div>
 </section>
 
-<section id="s4"><h2><span class="num">④</span>공식 발표 (기업 블로그)</h2><div class="card" id="official"></div></section>
+<section id="s4"><h2><span class="num">⑤</span>공식 발표 (기업 블로그)</h2><div class="card" id="official"></div></section>
 
 <footer>출처: Google News, AI타임스, 각 기업 공식 블로그, Hacker News(100점 이상) RSS. 제목·요약 일부와 원문 링크만 싣습니다.
  같은 이야기는 제목 단어 겹침으로 묶어 '매체 수'로 화제도를 셉니다. 자동 생성 자료라 분류가 틀릴 수 있습니다. · ai_news.py</footer>
@@ -412,6 +768,8 @@ const css=n=>getComputedStyle(document.documentElement).getPropertyValue(n).trim
 const C={text:css('--text-primary'),sub:css('--text-secondary'),muted:css('--text-muted'),grid:css('--grid'),surf:css('--surface-1'),
  accent:css('--accent'),s:[css('--s1'),css('--s2'),css('--s3'),css('--s4'),css('--s5'),css('--s6')]};
 const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const stc=s=>'st-'+String(s).split(' ')[0];
+const flowBadge=f=>f?`<span class="flow ${stc(f.status)}" title="${esc(f.thread)}">${f.days}일째 흐름 · ${esc(f.status)}</span>`:'';
 const tm=s=>{if(!s)return'';const d=new Date(s);return (d.getMonth()+1)+'/'+d.getDate()+' '+String(d.getHours()).padStart(2,'0')+':'+String(d.getMinutes()).padStart(2,'0')};
 const cfg={displayModeBar:false,responsive:true};
 const L=(x={})=>Object.assign({paper_bgcolor:'rgba(0,0,0,0)',plot_bgcolor:'rgba(0,0,0,0)',
@@ -427,7 +785,7 @@ if(D.brief&&D.brief.length){document.getElementById('brief-card').style.display=
 function story(c,i){
  const l=c.lead, isNew=c.items.some(x=>x.new);
  const others=c.items.filter(x=>x.link!==l.link).slice(0,3);
- return `<div class="story">${i!=null?`<span class="rank">${i+1}</span>`:''}${isNew?'<span class="new">NEW</span>':''}
+ return `<div class="story">${i!=null?`<span class="rank">${i+1}</span>`:''}${isNew?'<span class="new">NEW</span>':''}${flowBadge(c.flow)}
   <a href="${esc(l.link)}" target="_blank" rel="noopener">${esc(l.title)}</a>
   <div class="sub"><span class="pill">${esc(c.category)}</span>${esc(l.source)} · ${tm(l.published)}${c.n_sources>1?` · <b>${c.n_sources}개 매체</b>`:''}${c.entities.length?' · '+c.entities.map(esc).join(', '):''}</div>
   ${l.summary?`<div class="sum">${esc(l.summary)}</div>`:''}
@@ -435,7 +793,33 @@ function story(c,i){
 }
 document.getElementById('top').innerHTML=D.top.map((c,i)=>story(c,i)).join('')||'<p class="muted">수집된 뉴스가 없습니다.</p>';
 
-// ② charts (단일 색: 크기 비교)
+// ② weekly
+(function(){
+ const W=D.weekly||{};
+ if(!W.top){document.getElementById('sw').innerHTML+='<p class="muted">주간 기록이 쌓이면 표시됩니다.</p>';return;}
+ const md=d=>d.slice(5).replace('-','/');
+ document.getElementById('wk-range').textContent=`${md(W.days[0])} ~ ${md(W.days.at(-1))} · ${W.n_days}일치`;
+ const ins=(W.llm&&W.llm.length)?W.llm:W.insights;
+ document.getElementById('wk-ins').innerHTML=ins.map(x=>`<li>${esc(x)}</li>`).join('');
+ document.getElementById('wk-ins-note').textContent=(W.llm&&W.llm.length)?'헤드라인을 바탕으로 AI가 분석했습니다. 세부 사실은 원문을 확인하세요.'
+  :'제목 핵심어로 날짜별 기사를 묶어 자동 판정했습니다. 저장소 Secrets에 ANTHROPIC_API_KEY를 넣으면 AI 해설로 바뀝니다.';
+ document.getElementById('wk-top').innerHTML=W.top.map((t,i)=>{
+  const mx=Math.max(...W.top.flatMap(x=>x.series),1);
+  const strip=t.series.map((v,k)=>`<i class="${v?'':'off'}" style="${v?`opacity:${(0.25+0.75*v/mx).toFixed(2)}`:''}" title="${md(W.days[k])}: ${v}"></i>`).join('');
+  return `<div class="story"><span class="rank">${i+1}</span><span class="flow ${stc(t.status)}">${esc(t.status)}</span>
+   <a href="${esc(t.link)}" target="_blank" rel="noopener">${esc(t.title)}</a>
+   <div class="sub">${t.keywords.map(k=>`<span class="kw">${esc(k)}</span>`).join('')}<span class="pill">${esc(t.category)}</span>
+    ${t.days.length}일 · ${t.n_sources}개 매체 · 기사 묶음 ${t.n_stories}개${t.entities.length?' · '+t.entities.slice(0,5).map(esc).join(', '):''}
+    <span class="strip">${strip}</span></div>
+   <div class="sum">${esc(t.note)} · 임팩트 ${t.impact}</div>
+   ${t.links.length?`<div class="more">이어진 기사: ${t.links.slice(0,3).map(o=>`<a href="${esc(o.link)}" target="_blank" rel="noopener">${md(o.date)} ${esc(o.source)}</a>`).join(' · ')}</div>`:''}</div>`;}).join('');
+ const M=W.momentum||[];
+ document.getElementById('wk-mom').innerHTML=M.length?`<table class="mom"><tr><th>기업</th><th>오늘</th><th>이전 평균</th><th>변화</th></tr>${
+  M.map(m=>`<tr><td>${esc(m.name)}</td><td>${m.today}</td><td>${m.avg}</td><td class="${m.delta>0?'up':m.delta<0?'down':''}">${m.delta>0?'▲ +':m.delta<0?'▼ ':''}${m.delta}</td></tr>`).join('')}</table>`
+  :'<p class="muted">비교할 지난 기록이 아직 없습니다.</p>';
+})();
+
+// ③ charts (단일 색: 크기 비교)
 const ent=[...D.entities].slice(0,12).reverse();
 Plotly.newPlot('ent',[{type:'bar',orientation:'h',y:ent.map(e=>e[0]),x:ent.map(e=>e[1]),marker:{color:C.accent},width:0.6,
  text:ent.map(e=>e[1]),textposition:'outside',cliponaxis:false,textfont:{color:C.sub,size:11},hovertemplate:'%{y}: %{x}건<extra></extra>'}],
@@ -574,6 +958,34 @@ def render_pdf(data: dict, path: Path) -> Path:
                 pg.close(); pno += 1; pg = Page(pdf, "가장 많이 다뤄진 이야기 (계속)", pno)
             story_lines(pg, c, i + 1)
         pg.close()
+        # 이번 주 흐름
+        wk = data.get("weekly") or {}
+        if wk.get("top"):
+            pno += 1
+            d0, d1 = wk["days"][0][5:].replace("-", "/"), wk["days"][-1][5:].replace("-", "/")
+            pg = Page(pdf, f"이번 주 흐름 ({d0}~{d1}, {wk['n_days']}일치)", pno)
+            pg.text("오늘 뉴스는 이번 주 흐름과 어떻게 이어지나" + (" (AI 분석)" if wk.get("llm") else ""), size=10, bold=True)
+            for x in (wk.get("llm") or wk["insights"]):
+                pg.text("• " + x, size=8.4, indent=0.01, width=102)
+            pg.y -= 0.012
+            pg.text("이번 주 가장 임팩트 있는 흐름", size=10, bold=True)
+            pg.y -= 0.004
+            for i, t in enumerate(wk["top"]):
+                if pg.y < 0.1:
+                    pg.close(); pno += 1; pg = Page(pdf, "이번 주 흐름 (계속)", pno)
+                pg.text(f"{i + 1}. [{t['status']}] {t['title']}", size=8.6, bold=True, url=t["link"], width=100)
+                days_s = " ".join(f"{d[5:].replace('-', '/')}:{v}" for d, v in zip(wk["days"], t["series"]))
+                pg.text(f"{len(t['days'])}일 · {t['n_sources']}개 매체 · 임팩트 {t['impact']} · 핵심어 {', '.join(t['keywords']) or '-'}",
+                        size=7.2, color=MUTED, indent=0.02, lh=0.014)
+                pg.text(f"{t['note']} · 날짜별 화제도 {days_s}", size=7.4, color=SUB, indent=0.02, lh=0.0135, width=110)
+                pg.y -= 0.006
+            mom = [m for m in wk.get("momentum", []) if m["delta"]][:8]
+            if mom and pg.y > 0.15:
+                pg.y -= 0.008
+                pg.text("기업 언급 변화 (오늘 / 이전 평균)", size=10, bold=True)
+                pg.text("   ".join(f"{m['name']} {'▲' if m['delta'] > 0 else '▼'} {m['today']}/{m['avg']:g}" for m in mom),
+                        size=8.2, color=SUB, width=104)
+            pg.close()
         # 분야별
         pno += 1
         pg = Page(pdf, "분야별 뉴스", pno)
@@ -673,6 +1085,7 @@ def main(argv=None):
     (out / "archive").mkdir(parents=True, exist_ok=True)
     history = _load(out / "history.json", {})
     seen = _load(out / "seen.json", {})
+    stories = {} if args.demo else bootstrap_stories(out, _load(out / "stories.json", {}), now)
 
     if args.demo:
         items, status = demo_items(now), {"demo": 1}
@@ -683,7 +1096,8 @@ def main(argv=None):
         log("수집된 기사가 없어 기존 게시본을 유지합니다.")
         return
 
-    data = analyze(items, history, seen, now, use_llm=not (args.no_llm or args.demo))
+    data = analyze(items, history, seen, now, use_llm=not (args.no_llm or args.demo),
+                   stories=None if args.demo else stories)
     data["feeds"] = status
     wd = WEEKDAY[now.weekday()]
     suffix = "_demo" if args.demo else ""
@@ -710,6 +1124,7 @@ def main(argv=None):
         seen = {k: v for k, v in seen.items() if v >= cutoff}
         (out / "seen.json").write_text(json.dumps(seen), encoding="utf-8")
         (out / "history.json").write_text(json.dumps(history, ensure_ascii=False), encoding="utf-8")
+        (out / "stories.json").write_text(json.dumps(stories, ensure_ascii=False), encoding="utf-8")
 
     cut = (now - dt.timedelta(days=args.keep_days)).strftime("%Y-%m-%d")
     for p in (out / "archive").glob("*.html"):

@@ -305,13 +305,24 @@ KO_ALIAS = [("엔비디아", "nvidia"), ("젠슨", "huang"), ("오픈", "openai"
             ("마이크로소프트", "microsoft"), ("아마존", "amazon"), ("딥시크", "deepseek"), ("월렛", "wallet"),
             ("상장", "ipo"), ("기업공개", "ipo"), ("소송", "lawsuit"), ("규제", "regulation"), ("에이전트", "agent"),
             ("반도체", "chip"), ("데이터센터", "datacenter"), ("삼성", "samsung"), ("네이버", "naver"), ("카카오", "kakao"),
-            ("하이닉스", "hynix"), ("수출", "export"), ("중국", "china"), ("결제", "payment"), ("사임", "exit"), ("퇴진", "exit")]
+            ("하이닉스", "hynix"), ("수출", "export"), ("중국", "china"), ("결제", "payment")]
+
+# 사건 단어 사전: 기자마다 다르게 쓰는 '사건·파문' 표현을 하나의 표시어(EVENT)로 봄
+#   → 'Nvidia scandal', 'Nvidia turmoil', 'Huang ousted', '엔비디아 사태'가 같은 사건 신호가 됨
+#   새 표현이 보이면 여기에 추가하세요. (영어는 복수형 s 를 뗀 형태로 비교)
+EVENT = "§사건"
+EVENT_EN = set("scandal turmoil crisi crises fallout turbulence upheaval chaos ousted oust ouster ousting resign resigned "
+               "resignation resigning exit exited departure step stepped boardroom shakeup shake-up affair affairs "
+               "controversy saga exodu".split())
+EVENT_KO = ("사태", "사임", "퇴임", "퇴진", "경질", "해임", "스캔들", "파문", "위기", "혼란", "논란", "내홍", "불륜", "후폭풍", "충격")
 _KO_JOSA = ("에서", "으로", "은", "는", "이", "가", "을", "를", "의", "에", "도", "로", "과", "와")
 _FLOW_STOP = set("stock market today news week report could would should here what's s just now".split())
 
 
 def _norm(w: str) -> str | None:
     w = w.strip(".-")
+    if w in EVENT_EN or (len(w) > 4 and w[:-1] in EVENT_EN) or w.startswith(EVENT_KO):
+        return EVENT
     if re.fullmatch(r"[\d\.\-$]+", w) or w in _FLOW_STOP:
         return None
     if re.match(r"[a-z]", w):
@@ -376,7 +387,12 @@ def bootstrap_stories(out: Path, stories: dict, now: dt.datetime) -> dict:
 
 _GENERIC = set("인공지능 생성형 기업 세계 지원 활용 업무 영향 개발 수행 수준 공개 출시 모델 미국 기술 서비스 시장 전망 국내 글로벌 "
                "도입 강화 최초 발표 기반 국가 산업 시대 정부 ceo model test you my us other know face ahead buy price firm "
-               "risk investor launche launch top big first year next one two may artificial intelligence".split())
+               "risk investor launche launch top big first year next one two may artificial intelligence agent ai-agent 에이전트 "
+               "chatbot 챗봇 startup tech company llm genai 확대 추진 계약 체결 협력 선보 선보여 출범 돌입 가속 본격 나서 "
+               "추천 연결 서비스 플랫폼 솔루션 데이터 디지털 전환 상용화 계획".split())
+_CANON = {"gpt": "openai", "chatgpt": "openai", "claude": "anthropic", "gemini": "google", "deepmind": "google",
+          "alphabet": "google", "llama": "meta", "copilot": "microsoft", "aws": "amazon", "grok": "xai"}  # 제품명 → 회사명
+_WEAK = {EVENT}   # 혼자서는 열쇠가 못 되는 단어(기업명 + 사건 표시어)
 _ENT_TOK = {"openai": "OpenAI", "gpt": "OpenAI", "chatgpt": "OpenAI", "anthropic": "Anthropic", "claude": "Anthropic",
             "google": "Google", "gemini": "Google", "deepmind": "Google", "alphabet": "Google", "meta": "Meta",
             "llama": "Meta", "microsoft": "Microsoft", "copilot": "Microsoft", "nvidia": "NVIDIA", "apple": "Apple",
@@ -392,7 +408,7 @@ def _themes(pool: list[dict]) -> list[list[dict]]:
     df: dict[str, int] = {}
     for st in pool:
         st["ct"] = {w for w in st["tk"] if w not in _GENERIC}                       # 제목+같은 이야기 다른 제목
-        st["tt"] = {w for w in flow_tokens(st, title_only=True) if w not in _GENERIC}  # 대표 제목만
+        st["tt"] = {_CANON.get(w, w) for w in flow_tokens(st, title_only=True) if w not in _GENERIC}  # 대표 제목만
         for w in st["ct"]:
             df[w] = df.get(w, 0) + 1
     left = list(range(N))
@@ -404,6 +420,8 @@ def _themes(pool: list[dict]) -> list[list[dict]]:
             for a, b in combinations(ws, 2):
                 if a in _ENT_TOK and b in _ENT_TOK:          # 기업끼리 쌍(OpenAI+Google 등)은 사건이 아님
                     continue
+                if (a in _WEAK and b not in _ENT_TOK) or (b in _WEAK and a not in _ENT_TOK):
+                    continue                                 # 사건 표시어는 기업명과 짝일 때만 (예: nvidia+§사건)
                 if _ENT_TOK.get(a, a) == _ENT_TOK.get(b, b):
                     continue
                 sup.setdefault((a, b), []).append(i)
@@ -425,15 +443,86 @@ def _themes(pool: list[dict]) -> list[list[dict]]:
         for i in members:
             for w in pool[i]["ct"]:
                 cnt[w] = cnt.get(w, 0) + 1
-        core = {w for w, n in cnt.items() if n >= 3 and n / df[w] >= 0.6 and w not in _ENT_TOK}
-        hook = {w for w in best if w not in _ENT_TOK} | core      # 기업명 하나만으로는 합류시키지 않음
+        core = {w for w, n in cnt.items() if n >= 3 and n / df[w] >= 0.6 and w not in _ENT_TOK and w not in _WEAK}
+        weak = set(_ENT_TOK) | _WEAK
+        strong_best = set(best) - weak
+        th_ents = {_ENT_TOK[w] for w in best if w in _ENT_TOK}
         for i in left:
             tt = pool[i]["tt"]
-            if i not in members and tt & hook and (len(tt & (hook | set(best))) >= 2 or tt & (set(best) - set(_ENT_TOK))):
+            if i in members:
+                continue
+            st_ents = {_ENT_TOK[w] for w in tt if w in _ENT_TOK}
+            if th_ents and st_ents and not (th_ents & st_ents):   # 다른 기업 이야기(예: 구글 월렛)는 제외
+                continue
+            if tt & (strong_best | core):     # 사건 고유 단어(huang·wallet 등)가 있으면 합류
+                n_hit = len(tt & (core | set(best)))
+                if th_ents and not st_ents and n_hit < 2:   # 기업명 없는 기사는 단어 2개 이상 맞아야 (예: '中 상장 증권사' 제외)
+                    continue
+                if n_hit >= 2 or tt & strong_best:
+                    members.add(i)
+            elif not strong_best and set(best) <= tt:   # 쌍이 '기업+사건 표시어'면 둘 다 있어야 합류
                 members.add(i)
         groups.append(([pool[i] for i in sorted(members)], list(best) + sorted(core - set(best), key=lambda w: -cnt.get(w, 0))[:2]))
         left = [i for i in left if i not in members]
+    groups = _merge_themes(groups)
+    # 3단계: 합쳐진 흐름의 대표 단어(구성 기사의 30% 이상)로 남은 기사 한 번 더 흡수
+    #   예: 'nvidia' 없이 '젠슨 황 퇴임'만 쓴 한국어 기사 → huang + 사건 표시어로 합류
+    for gi, (ms, kw) in enumerate(groups):
+        cnt: dict[str, int] = {}
+        for m in ms:
+            for w in m["tt"]:
+                cnt[w] = cnt.get(w, 0) + 1
+        sig = {w for w, n in cnt.items() if n >= 3 and n / len(ms) >= 0.3}
+        sig_strong = sig - set(_ENT_TOK) - _WEAK
+        sig_ents = {_ENT_TOK[w] for w in sig if w in _ENT_TOK}
+        take = []
+        for i in left:
+            tt = pool[i]["tt"]
+            st_ents = {_ENT_TOK[w] for w in tt if w in _ENT_TOK}
+            if sig_ents and st_ents and not (sig_ents & st_ents):
+                continue
+            if tt & sig_strong and len(tt & sig) >= 2:
+                take.append(i)
+        if take:
+            groups[gi] = (ms + [pool[i] for i in take], kw)
+            left = [i for i in left if i not in take]
     return groups, [pool[i] for i in left]
+
+
+def _merge_themes(groups):
+    """2단계: 같은 기업 + 같은 사건 신호를 공유하는 흐름 합치기
+    (예: 'huang+nvidia' 흐름과 'nvidia+§사건' 흐름 → 하나). 기업만 같은 별개 발표는 합치지 않음."""
+    def sig(ms):
+        cnt = {}
+        for m in ms:
+            for w in m["tt"]:
+                cnt[w] = cnt.get(w, 0) + 1
+        return {w for w, n in cnt.items() if n / len(ms) >= 0.3}, cnt
+
+    merged = True
+    while merged:
+        merged = False
+        for a in range(len(groups)):
+            for b in range(a + 1, len(groups)):
+                (ma, ka), (mb, kb) = groups[a], groups[b]
+                sa, ca = sig(ma)
+                sb, cb = sig(mb)
+                ents = {_ENT_TOK[w] for w in sa & sb if w in _ENT_TOK}
+                shared = (sa & sb) - set(_ENT_TOK)
+                da, db = {m["date"] for m in ma}, {m["date"] for m in mb}
+                # 사건 표시어·사건 고유 단어를 함께 쓰고, 기간이 겹치면 같은 사건
+                if ents and shared and da & db:
+                    # 각 흐름의 사건 단어를 상대 흐름도 실제로 쓰는지(25% 이상) 확인
+                    ok_b = any(cb.get(w, 0) / len(mb) >= 0.25 for w in set(ka) - set(_ENT_TOK))
+                    ok_a = any(ca.get(w, 0) / len(ma) >= 0.25 for w in set(kb) - set(_ENT_TOK))
+                    if ok_a or ok_b:
+                        groups[a] = (ma + mb, ka + [w for w in kb if w not in ka])
+                        del groups[b]
+                        merged = True
+                        break
+            if merged:
+                break
+    return groups
 
 
 def llm_groups(pool: list[dict]) -> list[tuple[list[int], str]] | None:
@@ -861,7 +950,7 @@ document.getElementById('top').innerHTML=D.top.map((c,i)=>story(c,i)).join('')||
   const strip=t.series.map((v,k)=>`<i class="${v?'':'off'}" style="${v?`opacity:${(0.25+0.75*v/mx).toFixed(2)}`:''}" title="${md(W.days[k])}: ${v}"></i>`).join('');
   return `<div class="story"><span class="rank">${i+1}</span><span class="flow ${stc(t.status)}">${esc(t.status)}</span>
    ${t.label?`<b>${esc(t.label)}</b><div style="margin:2px 0 0 22px">`:''}<a href="${esc(t.link)}" target="_blank" rel="noopener" style="${t.label?'font-weight:400;font-size:14px':''}">${esc(t.title)}</a>${t.label?'</div>':''}
-   <div class="sub">${t.keywords.map(k=>`<span class="kw">${esc(k)}</span>`).join('')}<span class="pill">${esc(t.category)}</span>
+   <div class="sub">${t.keywords.map(k=>`<span class="kw">${esc(k==='§사건'?'사건·파문':k)}</span>`).join('')}<span class="pill">${esc(t.category)}</span>
     ${t.days.length}일 · ${t.n_sources}개 매체 · 기사 묶음 ${t.n_stories}개${t.entities.length?' · '+t.entities.slice(0,5).map(esc).join(', '):''}
     <span class="strip">${strip}</span></div>
    <div class="sum">${esc(t.note)} · 임팩트 ${t.impact}</div>
@@ -1029,7 +1118,7 @@ def render_pdf(data: dict, path: Path) -> Path:
                 pg.text(f"{i + 1}. [{t['status']}] " + (f"{t['label']} — " if t.get("label") else "") + t["title"],
                         size=8.6, bold=True, url=t["link"], width=100)
                 days_s = " ".join(f"{d[5:].replace('-', '/')}:{v}" for d, v in zip(wk["days"], t["series"]))
-                pg.text(f"{len(t['days'])}일 · {t['n_sources']}개 매체 · 임팩트 {t['impact']} · 핵심어 {', '.join(t['keywords']) or '-'}",
+                pg.text(f"{len(t['days'])}일 · {t['n_sources']}개 매체 · 임팩트 {t['impact']} · 핵심어 {', '.join('사건·파문' if k == EVENT else k for k in t['keywords']) or '-'}",
                         size=7.2, color=MUTED, indent=0.02, lh=0.014)
                 pg.text(f"{t['note']} · 날짜별 화제도 {days_s}", size=7.4, color=SUB, indent=0.02, lh=0.0135, width=110)
                 pg.y -= 0.006

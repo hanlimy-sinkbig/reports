@@ -436,7 +436,45 @@ def _themes(pool: list[dict]) -> list[list[dict]]:
     return groups, [pool[i] for i in left]
 
 
-def build_threads(stories: dict, days: list[str]) -> list[dict]:
+def llm_groups(pool: list[dict]) -> list[tuple[list[int], str]] | None:
+    """AI에게 '같은 사건'끼리 묶게 함 (단어가 달라도 뜻으로 묶음). 실패하면 None → 규칙 방식으로 대체"""
+    key = os.environ.get("ANTHROPIC_API_KEY")
+    if not key or requests is None or len(pool) < 2:
+        return None
+    lines = "\n".join(f"{i}|{st['date'][5:]}|{st['title'][:140]}" + (f" / {st['alt'][0][:80]}" if st.get("alt") else "")
+                      for i, st in enumerate(pool))
+    prompt = ("아래는 최근 며칠 AI 뉴스 기사 묶음 목록입니다. 형식: 번호|날짜|제목 (/ 뒤는 같은 묶음의 다른 제목).\n\n" + lines +
+              "\n\n같은 사건·이슈를 다룬 것끼리 묶으세요. 규칙:\n"
+              "- 표현이 달라도(예: scandal·turmoil·ousted·사임·사태) 같은 사건이면 한 묶음. 한국어·영어 기사도 같은 사건이면 함께.\n"
+              "- 사건의 여파(주가·투자 흐름·정책 반응)도 그 사건이 중심이면 같은 묶음.\n"
+              "- 같은 기업이라는 이유만으로 묶지 말 것(별개 발표·실적은 따로).\n"
+              "- 두 사건을 함께 다룬 기사는 더 중심인 쪽 하나에만.\n"
+              "- 2개 이상 모인 묶음만 쓰고, 혼자인 기사는 빼세요.\n"
+              "- label 은 사건을 나타내는 짧은 한국어(25자 이내).\n"
+              'JSON 배열만 출력: [{"label": "...", "ids": [번호, ...]}, ...]')
+    try:
+        r = requests.post("https://api.anthropic.com/v1/messages", timeout=180, headers={
+            "x-api-key": key, "anthropic-version": "2023-06-01", "content-type": "application/json"},
+            json={"model": os.environ.get("FLOW_LLM_MODEL", os.environ.get("BRIEF_LLM_MODEL", "claude-sonnet-5-5")),
+                  "max_tokens": 6000, "messages": [{"role": "user", "content": prompt}]})
+        r.raise_for_status()
+        text = "".join(b.get("text", "") for b in r.json().get("content", []))
+        m = re.search(r"\[.*\]", text, re.S)
+        raw = json.loads(m.group(0))
+    except Exception as e:
+        log(f"AI 사건 묶기 실패 → 규칙 방식 사용: {str(e)[:150]}")
+        return None
+    used, out = set(), []
+    for g in raw if isinstance(raw, list) else []:
+        ids = [int(i) for i in g.get("ids", []) if str(i).isdigit() and 0 <= int(i) < len(pool) and int(i) not in used]
+        if len(ids) >= 2:
+            used.update(ids)
+            out.append((ids, str(g.get("label", "")).strip()[:40]))
+    log(f"AI 사건 묶기 · {len(out)}개 묶음, {len(used)}/{len(pool)}개 기사")
+    return out or None
+
+
+def build_threads(stories: dict, days: list[str], use_llm: bool = False) -> list[dict]:
     """여러 날의 이야기를 '흐름'으로 묶기: ① 핵심어 쌍으로 큰 사건 ② 나머지는 제목 단어 겹침"""
     pool = []
     for d in days:
@@ -445,7 +483,18 @@ def build_threads(stories: dict, days: list[str]) -> list[dict]:
     if not pool:
         return []
     import math
-    groups, rest = _themes(pool)
+    ai = llm_groups(pool) if use_llm else None
+    if ai:
+        for st in pool:   # 대표 제목 선정에 쓰는 단어
+            st["tt"] = flow_tokens(st, title_only=True)
+        used = {i for ids, _ in ai for i in ids}
+        groups = [([pool[i] for i in sorted(ids)], [], label) for ids, label in ai]
+        rest = [st for i, st in enumerate(pool) if i not in used]
+        method = "ai"
+    else:
+        groups, rest = _themes(pool)
+        groups = [(ms, kw, "") for ms, kw in groups]
+        method = "rule"
     df: dict[str, int] = {}
     for st in rest:
         for w in st["tk"]:
@@ -472,7 +521,10 @@ def build_threads(stories: dict, days: list[str]) -> list[dict]:
         else:
             small.append([st])
 
-    threads = [{"members": ms, "keywords": kw} for ms, kw in groups] + [{"members": ms, "keywords": []} for ms in small]
+    if ai:   # AI가 혼자라고 본 기사는 다시 묶지 않음
+        small = [[st] for st in rest]
+    threads = [{"members": ms, "keywords": kw, "label": lb, "method": method} for ms, kw, lb in groups] + \
+              [{"members": ms, "keywords": [], "label": "", "method": method} for ms in small]
     for th in threads:
         ms = th["members"]
         per_day: dict[str, float] = {}
@@ -525,11 +577,11 @@ def _short(t: str, n: int = 60) -> str:
     return t if len(t) <= n else t[: n - 1].rstrip() + "…"
 
 
-def weekly_flow(stories: dict, history: dict, now: dt.datetime) -> dict:
+def weekly_flow(stories: dict, history: dict, now: dt.datetime, use_llm: bool = False) -> dict:
     today = now.strftime("%Y-%m-%d")
     days = [(now - dt.timedelta(days=k)).strftime("%Y-%m-%d") for k in range(WEEK_DAYS - 1, -1, -1)]
     days = [d for d in days if d in stories]
-    threads = build_threads(stories, days)
+    threads = build_threads(stories, days, use_llm)
     if not threads:
         return {}
     for th in threads:
@@ -564,26 +616,26 @@ def weekly_flow(stories: dict, history: dict, now: dt.datetime) -> dict:
     ins = []
     if top:
         t0 = top[0]
-        ins.append(f"이번 주 가장 큰 흐름은 「{_short(t0['title'])}」 — {len(t0['days'])}일 동안 {t0['n_sources']}개 매체가 다뤘고, "
+        ins.append(f"이번 주 가장 큰 흐름은 「{_short(t0.get('label') or t0['title'])}」 — {len(t0['days'])}일 동안 {t0['n_sources']}개 매체가 다뤘고, "
                    f"오늘은 '{t0['status']}' 상태입니다.")
     if len(top) > 2:
-        ins.append("그 밖의 주간 핵심: " + ", ".join(f"「{_short(t['title'], 45)}」({len(t['days'])}일·{t['status']})" for t in top[1:3]) + ".")
+        ins.append("그 밖의 주간 핵심: " + ", ".join(f"「{_short(t.get('label') or t['title'], 45)}」({len(t['days'])}일·{t['status']})" for t in top[1:3]) + ".")
     shown = [id(t) for t in top[:3]]
     grow = [t for t in threads if t["status"] in ("확대", "재부상") and id(t) not in shown and t["n_sources"] >= 3][:2]
     for t in grow:
-        ins.append(f"{'다시 떠오른' if t['status'] == '재부상' else '오늘 커진'} 흐름: 「{_short(t['title'])}」 ({t['note']}).")
+        ins.append(f"{'다시 떠오른' if t['status'] == '재부상' else '오늘 커진'} 흐름: 「{_short(t.get('label') or t['title'])}」 ({t['note']}).")
     newt = [t for t in threads if t["status"] == "새 흐름" and t["n_sources"] >= 2][:2]
     for t in newt:
-        ins.append(f"오늘 새로 등장: 「{_short(t['title'])}」 ({t['n_sources']}개 매체). 주간 흐름과 별개의 새 이슈입니다.")
+        ins.append(f"오늘 새로 등장: 「{_short(t.get('label') or t['title'])}」 ({t['n_sources']}개 매체). 주간 흐름과 별개의 새 이슈입니다.")
     quiet = [t for t in top if t["status"] == "잠잠"][:2]
     for t in quiet:
-        ins.append(f"잠잠해진 흐름: 「{_short(t['title'])}」 — {t['note']}.")
+        ins.append(f"잠잠해진 흐름: 「{_short(t.get('label') or t['title'])}」 — {t['note']}.")
     ups = [m for m in mom if m["delta"] >= 2][:2]
     downs = [m for m in mom if m["delta"] <= -2][:2]
     if ups or downs:
         ins.append("언급 변화: " + ", ".join([f"{m['name']} ▲ (오늘 {m['today']} / 평균 {m['avg']:g})" for m in ups] +
                                           [f"{m['name']} ▼ (오늘 {m['today']} / 평균 {m['avg']:g})" for m in downs]) + ".")
-    return {"days": days, "n_days": len(days), "top": top, "momentum": mom[:10],
+    return {"days": days, "n_days": len(days), "top": top, "momentum": mom[:10], "method": threads[0].get("method", "rule"),
             "cat_share": cat_share, "insights": ins, "llm": None, "_map": today_map}
 
 
@@ -591,7 +643,7 @@ def llm_flow(wk: dict, top_today: list[dict]) -> list[str] | None:
     key = os.environ.get("ANTHROPIC_API_KEY")
     if not key or requests is None or not wk:
         return None
-    week = "\n".join(f"- {t['title']} | {len(t['days'])}일, {t['n_sources']}개 매체, 일별 화제도 {t['series']}, 오늘 상태: {t['status']}"
+    week = "\n".join(f"- {(t.get('label') + ': ') if t.get('label') else ''}{t['title']} | {len(t['days'])}일, {t['n_sources']}개 매체, 일별 화제도 {t['series']}, 오늘 상태: {t['status']}"
                      for t in wk["top"])
     today = "\n".join(f"- {c['lead']['title']} ({c['n_sources']}개 매체)" for c in top_today[:10])
     prompt = ("최근 7일 AI 뉴스의 주요 흐름(헤드라인 기준)과 오늘 헤드라인입니다.\n[주간 흐름]\n" + week + "\n\n[오늘]\n" + today +
@@ -648,12 +700,12 @@ def analyze(items: list[dict], history: dict, seen: dict, now: dt.datetime, use_
         stories[today] = [story_record(c, now) for c in sorted(clusters, key=lambda c: -c["score"])[:STORIES_PER_DAY]]
         for d in sorted(stories)[:-STORIES_KEEP_D]:
             stories.pop(d)
-        wk = weekly_flow(stories, history, now)
+        wk = weekly_flow(stories, history, now, use_llm)
         mp = wk.pop("_map", {}) if wk else {}
         for c in clusters:
             th = mp.get(c["lead"]["link"])
             if th and len(th["days"]) >= 2:
-                c["flow"] = {"status": th["status"], "days": len(th["days"]), "thread": th["title"], "note": th["note"]}
+                c["flow"] = {"status": th["status"], "days": len(th["days"]), "thread": th.get("label") or th["title"], "note": th["note"]}
         if wk and use_llm:
             wk["llm"] = llm_flow(wk, clusters[:10])
 
@@ -803,11 +855,12 @@ document.getElementById('top').innerHTML=D.top.map((c,i)=>story(c,i)).join('')||
  document.getElementById('wk-ins').innerHTML=ins.map(x=>`<li>${esc(x)}</li>`).join('');
  document.getElementById('wk-ins-note').textContent=(W.llm&&W.llm.length)?'헤드라인을 바탕으로 AI가 분석했습니다. 세부 사실은 원문을 확인하세요.'
   :'제목 핵심어로 날짜별 기사를 묶어 자동 판정했습니다. 저장소 Secrets에 ANTHROPIC_API_KEY를 넣으면 AI 해설로 바뀝니다.';
+ document.getElementById('wk-ins-note').textContent+=W.method==='ai'?' · 사건 묶기: AI(같은 사건이면 표현이 달라도 함께 묶음)':' · 사건 묶기: 제목 핵심어 규칙';
  document.getElementById('wk-top').innerHTML=W.top.map((t,i)=>{
   const mx=Math.max(...W.top.flatMap(x=>x.series),1);
   const strip=t.series.map((v,k)=>`<i class="${v?'':'off'}" style="${v?`opacity:${(0.25+0.75*v/mx).toFixed(2)}`:''}" title="${md(W.days[k])}: ${v}"></i>`).join('');
   return `<div class="story"><span class="rank">${i+1}</span><span class="flow ${stc(t.status)}">${esc(t.status)}</span>
-   <a href="${esc(t.link)}" target="_blank" rel="noopener">${esc(t.title)}</a>
+   ${t.label?`<b>${esc(t.label)}</b><div style="margin:2px 0 0 22px">`:''}<a href="${esc(t.link)}" target="_blank" rel="noopener" style="${t.label?'font-weight:400;font-size:14px':''}">${esc(t.title)}</a>${t.label?'</div>':''}
    <div class="sub">${t.keywords.map(k=>`<span class="kw">${esc(k)}</span>`).join('')}<span class="pill">${esc(t.category)}</span>
     ${t.days.length}일 · ${t.n_sources}개 매체 · 기사 묶음 ${t.n_stories}개${t.entities.length?' · '+t.entities.slice(0,5).map(esc).join(', '):''}
     <span class="strip">${strip}</span></div>
@@ -973,7 +1026,8 @@ def render_pdf(data: dict, path: Path) -> Path:
             for i, t in enumerate(wk["top"]):
                 if pg.y < 0.1:
                     pg.close(); pno += 1; pg = Page(pdf, "이번 주 흐름 (계속)", pno)
-                pg.text(f"{i + 1}. [{t['status']}] {t['title']}", size=8.6, bold=True, url=t["link"], width=100)
+                pg.text(f"{i + 1}. [{t['status']}] " + (f"{t['label']} — " if t.get("label") else "") + t["title"],
+                        size=8.6, bold=True, url=t["link"], width=100)
                 days_s = " ".join(f"{d[5:].replace('-', '/')}:{v}" for d, v in zip(wk["days"], t["series"]))
                 pg.text(f"{len(t['days'])}일 · {t['n_sources']}개 매체 · 임팩트 {t['impact']} · 핵심어 {', '.join(t['keywords']) or '-'}",
                         size=7.2, color=MUTED, indent=0.02, lh=0.014)

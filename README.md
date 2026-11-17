@@ -7,6 +7,7 @@ GitHub Actions가 자동으로 만드는 개인 리포트 모음입니다. 결�
 - AI 뉴스 대시보드 (매일 06:40): https://hanlimy-sinkbig.github.io/reports/daily_ai-news/
 - 교육·입시 인사이트 (매일 06:50): https://hanlimy-sinkbig.github.io/reports/daily_edu-insight/
 - 야구 인사이트 (매일 07:05): https://hanlimy-sinkbig.github.io/reports/daily_baseball-insight/
+- 포트폴리오 대시보드 (평일 07:20·16:10 시세 갱신, 매매일지는 브라우저에서만 읽음): https://hanlimy-sinkbig.github.io/reports/daily_portfolio-dashboard/
 
 ## 이름 규칙
 - 모두 소문자. 구획 사이는 `_`, 한 구획 안 단어 사이는 `-` → `<주기>_<주제>`

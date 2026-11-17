@@ -427,9 +427,9 @@
         add("info", `환율 노출: 미장 ${(usW * 100).toFixed(0)}%`, `현재 환율 ${nf(R.fx, 1)}원 기준, 미장 보유분의 환차손익은 <span class="${cls(fxPnl)}">${signed(fxPnl)}</span>입니다. 환율이 10원 움직이면 평가액이 약 ${won(us.reduce((a, r) => a + r.qty * r.price * 10, 0))} 변합니다.`);
       }
       live.forEach(r => {
-        if (r.stop != null && r.price <= r.stop) add("risk", `${r.name}: 손절가 이탈`, `현재가 ${px(r.price, r.cur)}가 손절가 ${px(r.stop, r.cur)} 아래입니다. 매수 이유("${esc(S.inst[r.key].thesis || "기록 없음")}")가 여전히 유효한지 확인하고, 규칙대로 정리할지 손절가를 다시 정할지 결정해 두세요.`);
+        if (r.stop != null && r.price <= r.stop) add("risk", `${r.name}: 손절가 이탈`, `현재가 ${px(r.price, r.cur)}, 손절가 ${px(r.stop, r.cur)}보다 낮습니다. 매수 이유("${esc(S.inst[r.key].thesis || "기록 없음")}")가 여전히 유효한지 확인하고, 규칙대로 정리할지 손절가를 다시 정할지 결정해 두세요.`);
         else if (r.stop != null && r.price <= r.stop * 1.05) add("info", `${r.name}: 손절가 근접`, `손절가까지 ${((r.price / r.stop - 1) * 100).toFixed(1)}% 남았습니다.`);
-        if (r.target != null && r.price >= r.target) add("info", `${r.name}: 목표가 도달`, `현재가 ${px(r.price, r.cur)} ≥ 목표가 ${px(r.target, r.cur)}. 일부 차익실현이나 목표가 재설정을 고려하세요.`);
+        if (r.target != null && r.price >= r.target) add("info", `${r.name}: 목표가 도달`, `현재가 ${px(r.price, r.cur)}, 목표가 ${px(r.target, r.cur)} 이상입니다. 일부 차익실현이나 목표가 재설정을 고려하세요.`);
         if (r.ret != null && r.ret < -0.15) add("risk", `${r.name}: 수익률 ${pct(r.ret)}`, "손실 폭이 15%를 넘었습니다. 물타기 전에 처음 세운 매수 이유와 손절 기준을 먼저 점검하세요.");
       });
       const winners = live.filter(r => r.ret > 0.5);

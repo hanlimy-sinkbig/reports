@@ -1,12 +1,18 @@
 /* 포트폴리오 대시보드
    - 매매일지 CSV는 브라우저 안에서만 읽습니다 (서버 전송 없음, 이 기기 localStorage에만 보관).
-   - prices.json(시세·환율·분할 정보)은 GitHub Actions가 매일 만들어 둡니다. 없으면 최근 체결가로 대신 계산합니다. */
+   - 시세: GitHub Actions가 코스피·코스닥·국내 ETF·미국 상장 종목 전체를 market-data 브랜치에 종목별 파일로 저장해 둡니다.
+     페이지는 매매일지에 있는 종목 파일만 골라 읽습니다. 파일이 없으면 최근 체결가로 대신 계산합니다. */
 (function () {
   "use strict";
   const $ = s => document.querySelector(s);
   const LS_KEY = "pf_csv_v1";
   const COLORS = ["var(--s1)", "var(--s2)", "var(--s3)", "var(--s4)", "var(--s5)", "var(--s6)", "var(--s7)", "var(--s8)"];
   const SECTOR_HINT = { "005930": "반도체", "000660": "반도체", LRCX: "반도체", SNDK: "반도체", MU: "반도체", NVDA: "반도체", AMAT: "반도체", TSM: "반도체", ASML: "반도체", AVGO: "반도체", AMD: "반도체", INTC: "반도체" };
+  const DATA_BASE = (() => {
+    const h = location.hostname;
+    if (h.endsWith("github.io")) return `https://raw.githubusercontent.com/${h.split(".")[0]}/${location.pathname.split("/")[1]}/market-data/data/`;
+    return "data/";   // 로컬 테스트용
+  })();
   const S = { raw: [], rows: [], inst: {}, keys: [], prices: null, base: null, edits: {}, fxEdit: null, scenario: false, range: "ALL", warnings: [] };
 
   /* ───────── 형식 ───────── */
@@ -84,6 +90,7 @@
       };
       if (!rec.cur) rec.cur = /미장|미국|us/i.test(rec.market) ? "USD" : "KRW";
       if (/^\d{1,6}$/.test(rec.ticker)) rec.ticker = rec.ticker.padStart(6, "0");
+      else if (!/^[0-9][0-9A-Z]{5}$/.test(rec.ticker)) rec.ticker = rec.ticker.replace(/[./\s]/g, "-");   // BRK.B → BRK-B (야후 표기)
       rec.key = rec.ticker || rec.name;
       S.raw.push(rec);
       if (!rec.date || !rec.side || rec.price == null) { S.warnings.push(`${rec.line}행: 날짜·매매·단가 중 읽을 수 없는 값이 있어 건너뜀`); return; }
@@ -101,10 +108,36 @@
       if (r.side === "BUY" && r.reason) I.thesis = r.reason;
     });
     if (S.keys.length > 8) S.warnings.push("종목이 8개를 넘어 9번째부터는 색이 반복됩니다.");
-    applySplits();
   }
 
-  /* 액면분할: prices.json(야후 분할 기록)과 CSV '분할' 행을 반영해 분할 이전 매매의 수량·단가를 조정 */
+  /* ───────── 시세 파일 읽기 ───────── */
+  const fileCache = {};
+  async function getJSON(name) {
+    if (name in fileCache) return fileCache[name];
+    try { const r = await fetch(DATA_BASE + encodeURIComponent(name) + ".json", { cache: "no-cache" }); fileCache[name] = r.ok ? await r.json() : null; }
+    catch (e) { fileCache[name] = null; }
+    return fileCache[name];
+  }
+  function unpackFile(js) {
+    const dates = []; let d = new Date(js.d0 + "T00:00:00Z");
+    dates.push(js.d0);
+    js.dd.forEach(x => { d = new Date(d.getTime() + x * 864e5); dates.push(d.toISOString().slice(0, 10)); });
+    const c = js.c, v = js.v || [], v20 = v.slice(-20);
+    return {
+      last: c[c.length - 1], prev: c.length > 1 ? c[c.length - 2] : null, volume: v.length ? v[v.length - 1] : null,
+      avgVolume20: v20.length ? v20.reduce((a, b) => a + b, 0) / v20.length : null, history: { dates, close: c },
+      splits: js.sp || [], sector: js.sec, lastDate: dates[dates.length - 1], yname: js.n
+    };
+  }
+  async function loadQuotes(keys) {
+    const [meta, fx, ...files] = await Promise.all([getJSON("_meta"), getJSON("_fx"), ...keys.map(getJSON)]);
+    S.prices = { generated: meta ? meta.generated : null, meta, tickers: {}, fx: null };
+    keys.forEach((k, i) => { if (files[i]) S.prices.tickers[k] = unpackFile(files[i]); });
+    if (fx) { const u = unpackFile(fx); S.prices.fx = { last: u.last, history: u.history }; }
+    if (!meta && !fx && !Object.keys(S.prices.tickers).length) S.prices = null;
+  }
+
+  /* 액면분할: 시세 파일(야후 분할 기록)과 CSV '분할' 행을 반영해 분할 이전 매매의 수량·단가를 조정 */
   function applySplits() {
     S.rows.forEach(r => { r.aqty = r.qty; r.aprice = r.price; });
     S.keys.forEach(k => {
@@ -210,7 +243,7 @@
       return {
         key: k, name: I.name, market: I.market, cur: I.cur, qty: p.qty, avg, price, chg: q.prev ? price / q.prev - 1 : null,
         volume: q.volume, avgVol: q.avgVol, src: q.src, valueK, costK: p.costK, pnlK: valueK - p.costK, ret: p.costK > 0 ? valueK / p.costK - 1 : null,
-        realK: p.realK + p.divK, target: I.target, stop: I.stop, fxCost: p.costL > 0 ? p.costK / p.costL : null, color: I.color, sector: q.sector || SECTOR_HINT[k] || "기타"
+        realK: p.realK + p.divK, target: I.target, stop: I.stop, fxCost: p.costL > 0 ? p.costK / p.costL : null, color: I.color, sector: SECTOR_HINT[k] || q.sector || "기타"
       };
     });
     const val = rows.reduce((a, r) => a + r.valueK, 0);
@@ -264,7 +297,7 @@
     const c = (col, html, k) => `<td class="${k || ""}" data-c="${col}">${html}</td>`;
     const tgt = `${r.target != null ? px(r.target, r.cur) : "–"} / ${r.stop != null ? px(r.stop, r.cur) : "–"}`;
     const vol = r.volume != null ? `${short(r.volume)}${r.avgVol ? ` <small class="${r.volume > r.avgVol * 1.5 ? "up" : ""}">(${(r.volume / r.avgVol * 100).toFixed(0)}%)</small>` : ""}` : "–";
-    return `<td class="l"><span class="sw" style="background:${r.color}"></span>${esc(r.name)}${r.src !== "시세" ? ' <span class="tag" title="prices.json에 시세가 없어 최근 체결가 사용">체결가</span>' : ""}</td>
+    return `<td class="l"><span class="sw" style="background:${r.color}"></span>${esc(r.name)}${r.src !== "시세" ? ' <span class="tag" title="시세 파일이 없어 최근 체결가 사용 (티커 표기 확인)">체결가</span>' : ""}</td>
       <td class="l">${esc(r.market)}</td>
       ${ed("qty", r.qty, 4) || c("qty", nf(r.qty, r.qty % 1 ? 4 : 0))}
       ${ed("avg", r.avg, r.cur === "USD" ? 2 : 0) || c("avg", px(r.avg, r.cur))}
@@ -285,7 +318,7 @@
     const R = S.base;
     const head = `<thead><tr>${COLS.map(([h, k]) => `<th class="${k}">${h}</th>`).join("")}</tr></thead>`;
     $("#t2").innerHTML = head + "<tbody>" + R.rows.map(r => `<tr class="${r.qty > 0 ? "" : "closed"}">${cells(r, false)}</tr>`).join("") + totalRow(R) + "</tbody>";
-    const asof = S.prices ? `시세 기준: ${S.prices.generated}` : "prices.json 없음 → 현재가 대신 최근 체결가로 계산";
+    const asof = S.prices && S.prices.generated ? `시세 기준: ${S.prices.generated}` : "시세 파일 없음 → 현재가 대신 최근 체결가로 계산";
     $("#t2hint").textContent = `${asof} · 거래량 괄호는 20일 평균 대비`;
   }
   function editRows() {   // 표③ 현재 입력값으로 행 다시 계산
@@ -458,7 +491,10 @@
     const gross = R.trades.reduce((a, x) => a + Math.abs(x.pnl), 0);
     if (gross > 0 && (R.fees + R.taxes) / gross > 0.05) add("info", "거래 비용 점검", `수수료·세금이 ${won(R.fees + R.taxes)}로 매매 손익 규모의 ${((R.fees + R.taxes) / gross * 100).toFixed(1)}%입니다. 잦은 매매를 줄이거나 우대 수수료 이벤트를 확인해 보세요.`);
     const noPx = S.keys.filter(k => !(S.prices && S.prices.tickers[k]));
-    if (noPx.length) add("todo", "시세가 없는 종목", `${noPx.map(k => S.inst[k].name).join(", ")} → 저장소의 <code>daily_portfolio-dashboard/tickers.json</code>에 티커를 추가하면 다음 실행부터 현재가·거래량·추세가 채워집니다.`);
+    if (noPx.length) {
+      const pend = S.prices && S.prices.meta && S.prices.meta.pending > 0;
+      add("todo", "시세를 찾지 못한 종목", `${noPx.map(k => `${esc(S.inst[k].name)}(${esc(k)})`).join(", ")} → 매매일지의 티커 표기를 확인하세요. 국내는 6자리 종목코드(005930), 미국은 야후 티커(AAPL, BRK-B)입니다.${pend ? ` 지금은 전체 시세를 처음 채우는 중이라(남은 종목 ${nf(S.prices.meta.pending)}개) 다음 실행 후 나타날 수도 있습니다.` : " 상장폐지·장외 종목은 수집 대상이 아닙니다."}`);
+    }
     const noReason = S.rows.filter(r => (r.side === "BUY" || r.side === "SELL") && !r.reason).length;
     if (noReason) add("todo", `매매사유 빈칸 ${noReason}건`, "매수·매도 이유를 한 줄이라도 남겨 두면 손절·목표가 판단과 복기에 큰 도움이 됩니다.");
     $("#advice").innerHTML = A.join("") || '<li class="info"><b>특이사항 없음</b>현재 규칙에 걸리는 항목이 없습니다.</li>';
@@ -470,15 +506,18 @@
     renderTiles(R); renderCharts(R); renderAdvice(R);
     $("#scnBadge").hidden = !S.scenario;
   }
-  function start(text, fromStorage) {
+  async function start(text, fromStorage) {
     try { ingest(text); } catch (e) { showWarn([e.message]); return; }
+    $("#asof").textContent = `시세 불러오는 중… (${S.keys.length}종목)`;
+    await loadQuotes(S.keys);
+    applySplits();
     S.edits = {}; S.fxEdit = null; S.scenario = false;
     S.base = simulate(false);
     $("#fxEdit").value = +S.base.fx.toFixed(1);
     $("#app").hidden = false; $("#btnForget").hidden = !fromStorage && !safeGet();
     fillFilters(); renderT1(); renderT2(); renderT3(); renderAll();
     const first = S.rows[0] ? S.rows[0].date : "", last = S.rows.length ? S.rows[S.rows.length - 1].date : "";
-    $("#asof").textContent = `매매 ${S.rows.length}건 · ${first} ~ ${last} · 종목 ${S.keys.length}개 · ${S.prices ? "시세 " + S.prices.generated : "시세 파일 없음"}`;
+    $("#asof").textContent = `매매 ${S.rows.length}건 · ${first} ~ ${last} · 종목 ${S.keys.length}개 · ${S.prices && S.prices.generated ? "시세 " + S.prices.generated : "시세 파일 없음"}`;
     showWarn(S.warnings);
   }
   function showWarn(list) { const w = $("#warn"); w.hidden = !list.length; w.innerHTML = list.map(esc).join("<br>"); }
@@ -488,10 +527,10 @@
   /* ───────── 이벤트 ───────── */
   $("#file").addEventListener("change", async ev => {
     const f = ev.target.files[0]; if (!f) return;
-    const text = decode(await f.arrayBuffer()); safeSet(text); start(text, true); $("#btnForget").hidden = false; ev.target.value = "";
+    const text = decode(await f.arrayBuffer()); safeSet(text); await start(text, true); $("#btnForget").hidden = false; ev.target.value = "";
   });
   $("#btnSample").addEventListener("click", async () => {
-    const r = await fetch("sample.csv", { cache: "no-store" }); start(decode(await r.arrayBuffer()), false);
+    const r = await fetch("sample.csv", { cache: "no-store" }); await start(decode(await r.arrayBuffer()), false);
     $("#asof").textContent = "샘플 데이터 · " + $("#asof").textContent;
   });
   $("#btnForget").addEventListener("click", () => { safeSet(null); location.reload(); });
@@ -517,8 +556,8 @@
   window.addEventListener("scroll", () => Charts.hideTip(), { passive: true });
 
   (async function init() {
-    try { const r = await fetch("prices.json", { cache: "no-store" }); if (r.ok) S.prices = await r.json(); } catch (e) { }
-    $("#foot").textContent = S.prices ? `시세 갱신: ${S.prices.generated} (GitHub Actions, 평일 2회)` : "시세 파일(prices.json)이 아직 없습니다. Actions 실행 후 생깁니다.";
+    const m = await getJSON("_meta");
+    $("#foot").textContent = m ? `시세 갱신: ${m.generated} · 수집 종목 ${nf(m.total)}개 (코스피·코스닥·국내 ETF·미국 상장 주식/ETF, 평일 2회)${m.pending ? ` · 처음 채우는 중, 남은 ${nf(m.pending)}개` : ""}` : "시세 파일이 아직 없습니다. Actions 실행 후 생깁니다.";
     const saved = safeGet(); if (saved) start(saved, true);
   })();
 })();

@@ -18,7 +18,8 @@
 방식: 이미 파일이 있는 종목은 최근 7일만 받아 이어 붙이고(빠름),
       파일이 없는 종목(첫 실행·신규 상장)과 최근 분할이 생긴 종목은 2년치를 새로 받습니다(실행당 상한 있음).
 
-사용: python build.py --data _data/data --site _site/daily_portfolio-dashboard [--backfill 4000]
+사용: python build.py --data _data/data            (시세)
+      python build.py --site _site/daily_portfolio-dashboard   (페이지)
 """
 from __future__ import annotations
 
@@ -326,18 +327,19 @@ def write_indexes(site: Path, sub: str) -> None:
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--data", help="시세 폴더 (market-data 브랜치의 data/)")
-    ap.add_argument("--site", required=True, help="페이지 출력 폴더 (gh-pages 의 daily_portfolio-dashboard/)")
+    ap.add_argument("--site", help="페이지 출력 폴더 (gh-pages 의 daily_portfolio-dashboard/)")
     ap.add_argument("--backfill", type=int, default=4000, help="한 번에 새로 받을 종목 수 상한")
     a = ap.parse_args()
-    site = Path(a.site)
-    site.mkdir(parents=True, exist_ok=True)
-    for f in (HERE / "web").iterdir():
-        shutil.copy2(f, site / f.name)
-    (site / "prices.json").unlink(missing_ok=True)      # 예전 방식 파일 정리
-    write_indexes(site.parent, site.name)
+    if a.site:
+        site = Path(a.site)
+        site.mkdir(parents=True, exist_ok=True)
+        for f in (HERE / "web").iterdir():
+            shutil.copy2(f, site / f.name)
+        (site / "prices.json").unlink(missing_ok=True)      # 예전 방식 파일 정리
+        write_indexes(site.parent, site.name)
+        log(f"페이지 → {site}")
     if a.data:
         run(Path(a.data), a.backfill)
-    log(f"페이지 → {site}")
     return 0
 
 

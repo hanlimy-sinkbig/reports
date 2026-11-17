@@ -52,7 +52,7 @@ jobs:
 
       - name: 전 종목 시세 받기
         run: |
-          python "$REPORT/build.py" --site /tmp/unused --data _data/data \
+          python "$REPORT/build.py" --data _data/data \
             --backfill "${{ inputs.backfill || '4000' }}"
           printf '# market-data\n자동 생성되는 시세 저장 브랜치입니다 (daily_portfolio-dashboard). 직접 고치지 마세요.\n' > _data/README.md
 

@@ -126,7 +126,7 @@
     return {
       last: c[c.length - 1], prev: c.length > 1 ? c[c.length - 2] : null, volume: v.length ? v[v.length - 1] : null,
       avgVolume20: v20.length ? v20.reduce((a, b) => a + b, 0) / v20.length : null, history: { dates, close: c },
-      splits: js.sp || [], sector: js.sec, lastDate: dates[dates.length - 1], yname: js.n
+      splits: js.sp || [], sector: js.sec, lastDate: dates[dates.length - 1], yname: js.n, cur: js.cur
     };
   }
   async function loadQuotes(keys) {
@@ -135,6 +135,24 @@
     keys.forEach((k, i) => { if (files[i]) S.prices.tickers[k] = unpackFile(files[i]); });
     if (fx) { const u = unpackFile(fx); S.prices.fx = { last: u.last, history: u.history }; }
     if (!meta && !fx && !Object.keys(S.prices.tickers).length) S.prices = null;
+    staleWarnings(keys);
+  }
+
+  /* 시세 '데이터 없음'·오래된 시세 경고: 같은 통화(시장) 종목 중 가장 최근 날짜보다 4일 넘게 뒤처지면 표시 */
+  function staleWarnings(keys) {
+    if (!S.prices) { S.warnings.push("시세 데이터 없음 — 시세 파일을 읽지 못해 모든 종목을 최근 체결가로 계산했습니다."); return; }
+    const T = S.prices.tickers, newest = {};
+    keys.forEach(k => { const t = T[k]; if (t && (!newest[t.cur] || t.lastDate > newest[t.cur])) newest[t.cur] = t.lastDate; });
+    const none = [], old = [];
+    keys.forEach(k => {
+      const t = T[k], nm = (S.inst[k] && S.inst[k].name) || k;
+      if (!t) { none.push(nm); return; }
+      const ref = newest[t.cur];
+      if (ref && (new Date(ref) - new Date(t.lastDate)) / 864e5 > 4) old.push(`${nm}(${t.lastDate.slice(5).replace("-", "/")})`);
+    });
+    if (none.length) S.warnings.push(`시세 데이터 없음: ${none.join(", ")} → 현재가 대신 최근 체결가로 계산`);
+    if (old.length) S.warnings.push(`시세가 오래됨(받아 오기 실패): ${old.join(", ")} — 괄호 안 날짜 종가로 계산`);
+    if (S.prices.meta && S.prices.meta.fx_ok === false) S.warnings.push("환율 데이터 없음(이번 갱신 실패) → 지난 환율로 계산");
   }
 
   /* 액면분할: 시세 파일(야후 분할 기록)과 CSV '분할' 행을 반영해 분할 이전 매매의 수량·단가를 조정 */
@@ -557,7 +575,7 @@
 
   (async function init() {
     const m = await getJSON("_meta");
-    $("#foot").textContent = m ? `시세 갱신: ${m.generated} · 수집 종목 ${nf(m.total)}개 (코스피·코스닥·국내 ETF·미국 상장 주식/ETF, 평일 2회)${m.pending ? ` · 처음 채우는 중, 남은 ${nf(m.pending)}개` : ""}` : "시세 파일이 아직 없습니다. Actions 실행 후 생깁니다.";
+    $("#foot").textContent = m ? `시세 갱신: ${m.generated} · 수집 종목 ${nf(m.total)}개 (코스피·코스닥·국내 ETF·미국 상장 주식/ETF, 평일 2회)${m.pending ? ` · 처음 채우는 중, 남은 ${nf(m.pending)}개` : ""}${m.missed ? ` · ⚠ 이번 갱신에서 ${nf(m.missed)}개 종목은 받지 못해 지난 종가 유지` : ""}` : "시세 파일이 아직 없습니다. Actions 실행 후 생깁니다.";
     const saved = safeGet(); if (saved) start(saved, true);
   })();
 })();

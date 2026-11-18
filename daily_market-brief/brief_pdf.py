@@ -213,6 +213,10 @@ def _header(fig, data, page, title):
     fig.text(0.94, 0.02, f"{page}", fontsize=7, color=MUTED, ha="right")
     fig.text(0.06, 0.02, "자동 생성 참고자료 · 투자 권유 아님 · 데이터: Yahoo Finance, Google News",
              fontsize=6.5, color=MUTED)
+    if page == 1 and data.get("fails"):
+        msg = "※ 데이터 없음(3번 재시도 후 실패): " + ", ".join(data["fails"])
+        fig.text(0.06, 0.04, msg[:150] + ("…" if len(msg) > 150 else ""), fontsize=7.5, color="#a15c00",
+                 fontweight="bold")
 
 
 # ---- 페이지 -----------------------------------------------------------------

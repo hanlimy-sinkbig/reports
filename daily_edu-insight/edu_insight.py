@@ -30,6 +30,9 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import edu_data as E  # noqa: E402
 
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "_shared"))
+import net_retry as NR  # noqa: E402
+
 try:
     import requests
 except ImportError:  # pragma: no cover
@@ -48,12 +51,15 @@ def fetch_news(label: str, q: str, limit: int = 8) -> list[dict]:
     if requests is None:
         return []
     url = "https://news.google.com/rss/search?q=" + urllib.parse.quote(f"{q} when:7d") + "&hl=ko&gl=KR&ceid=KR:ko"
-    try:
+    def once():
         r = requests.get(url, timeout=20, headers={"User-Agent": "Mozilla/5.0"})
         r.raise_for_status()
-        root = ET.fromstring(r.content)
+        return ET.fromstring(r.content)
+    try:
+        root = NR.retry(once, f"뉴스·{label}")
     except Exception as e:
         log(f"뉴스 실패 · {label}: {e}")
+        NR.fail(f"뉴스·{label}", e)
         return []
     out, seen = [], set()
     for it in root.iter("item"):
@@ -275,7 +281,7 @@ document.getElementById('subj').innerHTML=D.subjects.map(r=>`<tr><td>${esc(r[0])
 
 // 뉴스
 document.getElementById('news').innerHTML=Object.entries(D.news).map(([lab,items])=>`<div class="card"><h3>${esc(lab)} <span class="muted">${items.length}건</span></h3>
- ${items.length?`<ul class="news">${items.map(n=>`<li><a href="${esc(n.link)}" target="_blank" rel="noopener">${esc(n.title)}</a><span class="src">${esc(n.source)} ${esc(n.date)}</span></li>`).join('')}</ul>`:'<p class="muted">이번 주 기사가 없습니다.</p>'}</div>`).join('');
+ ${items.length?`<ul class="news">${items.map(n=>`<li><a href="${esc(n.link)}" target="_blank" rel="noopener">${esc(n.title)}</a><span class="src">${esc(n.source)} ${esc(n.date)}</span></li>`).join('')}</ul>`:(D.fails||[]).includes('뉴스·'+lab)?'<p class="muted"><b>데이터 없음</b> — 다시 시도했지만 가져오지 못했습니다. 다음 실행 때 다시 받아 옵니다.</p>':'<p class="muted">이번 주 기사가 없습니다.</p>'}</div>`).join('');
 document.getElementById('sources').innerHTML=D.sources.map(([t,u])=>`<li><a href="${esc(u)}" target="_blank" rel="noopener">${esc(t)}</a></li>`).join('');
 </script></body></html>
 """
@@ -375,6 +381,9 @@ def render_pdf(d: dict, path: Path) -> Path:
     with PdfPages(path) as pdf:
         pno = 1
         pg = Page(pdf, f"교육·입시 인사이트 · {d['today']}", pno)
+        if d.get("fails"):
+            pg.t("※ 데이터 없음(3번 재시도 후 실패): " + ", ".join(d["fails"]), 8, "#a15c00", bold=True)
+            pg.y -= 0.006
         pg.t("① 핵심 요약 — 2031학년도 대입 학생 기준", 10.5, bold=True)
         for title, body, k in d["key_points"]:
             pg.t("■ " + title, 9, KC[k], bold=True)
@@ -541,9 +550,10 @@ def main(argv=None):
     (out / "archive").mkdir(parents=True, exist_ok=True)
     news = demo_news() if a.demo else {lab: fetch_news(lab, q) for lab, q in E.NEWS_QUERIES}
     d = build_data(news, now)
+    d["fails"] = list(NR.FAILS)
     wd = WEEKDAY[now.weekday()]
     sfx = "_demo" if a.demo else ""
-    page = render_html(d, a.demo)
+    page = NR.inject_banner(render_html(d, a.demo))
     (out / "index.html").write_text(page, encoding="utf-8")
     dated = out / "archive" / f"{now:%Y-%m-%d}_{wd}{sfx}.html"
     dated.write_text(page, encoding="utf-8")

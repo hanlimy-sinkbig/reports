@@ -47,6 +47,9 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "_shared"))
+import net_retry as NR  # noqa: E402
+
 try:
     import requests
 except ImportError:  # pragma: no cover
@@ -190,21 +193,43 @@ class LiveSource:
         self.yf = yf
 
     def history(self, tickers: list[str], period: str = "1y") -> dict[str, pd.DataFrame]:
+        """한 번에 받고, 빠진 종목만 최대 2번 더 받는다(10초 → 20초 쉬고). 야후가 요청 과다로 일부를 비워 보낼 때 대비."""
+        import time
         out: dict[str, pd.DataFrame] = {}
-        raw = self.yf.download(tickers, period=period, interval="1d", group_by="ticker",
-                               auto_adjust=False, progress=False, threads=True)
-        for t in tickers:
+        todo = list(tickers)
+        for attempt in range(NR.TRIES):
+            if attempt:
+                wait = 10 * attempt
+                log(f"시세 빠진 {len(todo)}개 다시 받기 ({attempt}/{NR.TRIES - 1}, {wait}초 후)")
+                time.sleep(wait)
             try:
-                df = raw[t] if isinstance(raw.columns, pd.MultiIndex) else raw
-                df = df[["Open", "High", "Low", "Close", "Volume"]].dropna(subset=["Close"])
-                if len(df) >= 5:
-                    df.index = pd.to_datetime(df.index).tz_localize(None)
-                    out[t] = df
-            except Exception:
-                pass
-        missing = sorted(set(tickers) - set(out))
-        if missing:
-            log(f"시세 없음(건너뜀): {', '.join(missing)}")
+                raw = self.yf.download(todo, period=period, interval="1d", group_by="ticker",
+                                       auto_adjust=False, progress=False, threads=True)
+            except Exception as e:  # noqa: BLE001
+                log(f"시세 다운로드 오류: {e}")
+                raw = None
+            if raw is not None and not raw.empty:
+                for t in todo:
+                    try:
+                        df = raw[t] if isinstance(raw.columns, pd.MultiIndex) else raw
+                        df = df[["Open", "High", "Low", "Close", "Volume"]].dropna(subset=["Close"])
+                        if len(df) >= 5:
+                            df.index = pd.to_datetime(df.index).tz_localize(None)
+                            out[t] = df
+                    except Exception:
+                        pass
+            todo = [t for t in tickers if t not in out]
+            if not todo:
+                break
+        if todo:
+            log(f"시세 없음(건너뜀): {', '.join(todo)}")
+            idx_names = {**MAIN_INDICES, **SUB_INDICES}
+            for t in todo:
+                if t in idx_names:
+                    NR.fail(f"시세·{idx_names[t]}")
+            rest = [info(t)[0] for t in todo if t not in idx_names]
+            if rest:
+                NR.fail(f"시세·종목 {len(rest)}개({', '.join(rest[:5])}{'…' if len(rest) > 5 else ''})")
         return out
 
     def market_caps(self, tickers: list[str]) -> dict[str, float]:
@@ -252,12 +277,15 @@ def google_news(query: str, lang: str, limit: int) -> list[dict]:
         url = f"https://news.google.com/rss/search?q={q}&hl=ko&gl=KR&ceid=KR:ko"
     else:
         url = f"https://news.google.com/rss/search?q={q}&hl=en-US&gl=US&ceid=US:en"
-    try:
+    def once():
         r = requests.get(url, timeout=15, headers={"User-Agent": "Mozilla/5.0"})
         r.raise_for_status()
-        root = ET.fromstring(r.content)
+        return ET.fromstring(r.content)
+    try:
+        root = NR.retry(once, f"뉴스·{query}")
     except Exception as e:
         log(f"뉴스 조회 실패({query}): {e}")
+        NR.fail(f"뉴스·{query.strip(chr(34))}", e)
         return []
     items = []
     for it in root.iter("item"):
@@ -978,6 +1006,12 @@ def main(argv=None):
 
     source = DemoSource() if args.demo else LiveSource()
     data = build(source, top_n=args.top, watch=args.watch, news_on=not args.no_news, demo=args.demo)
+    data["fails"] = list(NR.FAILS)
+    if not args.demo and data["asof_us"] == "-" and data["asof_kr"] == "-":
+        # 나스닥·코스피 둘 다 못 받음 = 시세 서버 차단/장애. 빈 페이지로 덮어쓰지 않고 실패로 끝내
+        # (어제 페이지 유지 + GitHub이 실패 메일 발송)
+        log("나스닥·코스피 시세를 모두 가져오지 못해 게시하지 않습니다(어제 페이지 유지).")
+        sys.exit(1)
 
     # 한·미 모두 휴장이어서 직전 리포트와 기준일이 같으면 건너뜀
     state = outdir / ".last_asof.json"
@@ -991,7 +1025,7 @@ def main(argv=None):
             pass
 
     suffix = "_demo" if args.demo else ""
-    page = render(data)
+    page = NR.inject_banner(render(data))
     if args.layout == "site":
         dated = save_site(outdir, data, page, now, suffix, not args.no_pdf, args.keep_days)
     else:

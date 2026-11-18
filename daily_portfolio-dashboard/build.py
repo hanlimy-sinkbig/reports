@@ -244,7 +244,7 @@ def run(data: Path, backfill_cap: int, chunk_new: int = 80, chunk_upd: int = 250
     save(uf, uni)
     log(f"수집 대상 {len(uni)}개")
     have = {p.stem for p in data.glob("*.json") if not p.stem.startswith("_")}
-    stats = {"updated": 0, "new": 0, "failed": 0, "refetch": 0}
+    stats = {"updated": 0, "new": 0, "failed": 0, "refetch": 0, "missed": 0}
     cutoff = (dt.date.today() - dt.timedelta(days=HIST_DAYS)).isoformat()
 
     # 2-1. 기존 파일: 최근 7일 이어 붙이기
@@ -257,6 +257,7 @@ def run(data: Path, backfill_cap: int, chunk_new: int = 80, chunk_upd: int = 250
         for k in keys:
             sub = fr.get(uni[k][0])
             if sub is None:
+                stats["missed"] += 1          # 이번에 못 받음 → 기존 파일(지난 종가) 그대로, 화면에 '기준일' 경고
                 continue
             nd, nc, nv, nsp = to_series(sub)
             if nsp:                       # 분할 발생 → 과거 종가 전체가 바뀌므로 다시 받기
@@ -298,12 +299,17 @@ def run(data: Path, backfill_cap: int, chunk_new: int = 80, chunk_upd: int = 250
 
     # 2-3. 환율
     fr = frames(download(["KRW=X"], period="2y"), ["KRW=X"])
+    stats["fx_ok"] = "KRW=X" in fr
     if "KRW=X" in fr:
         d, c, v, sp = to_series(fr["KRW=X"])
         save(data / "_fx.json", pack(["KRW=X", "USD/KRW", "", "KRW"], d, c, v, []))
     stats["total"] = sum(1 for p in data.glob("*.json") if not p.stem.startswith("_"))
     stats["universe"] = len(uni)
     stats["generated"] = dt.datetime.now(KST).strftime("%Y-%m-%d %H:%M KST")
+    if olds and stats["updated"] == 0:
+        # 하나도 못 받음 = 야후 차단/장애. _meta를 덮어쓰지 않아야 화면의 '시세 갱신' 시각이 거짓이 되지 않음
+        log("기존 종목 시세를 하나도 받지 못했습니다 → _meta.json 유지, 실패로 종료")
+        raise SystemExit(1)
     save(data / "_meta.json", stats)
     log(f"완료 {stats}")
     return stats

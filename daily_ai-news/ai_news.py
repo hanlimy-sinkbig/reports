@@ -35,6 +35,9 @@ from concurrent.futures import ThreadPoolExecutor
 from email.utils import parsedate_to_datetime
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "_shared"))
+import net_retry as NR  # noqa: E402
+
 try:
     import requests
 except ImportError:  # pragma: no cover
@@ -159,12 +162,15 @@ def fetch_feed(feed) -> list[dict]:
     name, url, lang, kind, limit = feed
     if requests is None:
         return []
-    try:
+    def once():
         r = requests.get(url, timeout=20, headers=UA)
         r.raise_for_status()
-        root = ET.fromstring(r.content)
+        return ET.fromstring(r.content)
+    try:
+        root = NR.retry(once, f"피드·{name}")
     except Exception as e:
         log(f"피드 실패 · {name}: {str(e)[:120]}")
+        NR.fail(f"피드·{name}", e)
         return []
     items = []
     for it in root.iter():
@@ -1073,6 +1079,9 @@ def render_pdf(data: dict, path: Path) -> Path:
     with PdfPages(path) as pdf:
         pno = 1
         pg = Page(pdf, f"AI 뉴스 대시보드 · {data['today']}", pno)
+        if data.get("fails"):
+            pg.text("※ 데이터 없음(3번 재시도 후 실패): " + ", ".join(data["fails"]), size=8, color="#a15c00", bold=True)
+            pg.y -= 0.006
         if data.get("brief"):
             pg.text("AI 브리핑", size=10, bold=True)
             for b in data["brief"]:
@@ -1236,15 +1245,16 @@ def main(argv=None):
         items, status = collect(now)
     log(f"수집 {len(items)}건 (기간 내)")
     if not items and not args.demo:
-        log("수집된 기사가 없어 기존 게시본을 유지합니다.")
-        return
+        log("수집된 기사가 없어 기존 게시본을 유지합니다(실패로 종료 → GitHub이 실패 메일 발송).")
+        sys.exit(1)
 
     data = analyze(items, history, seen, now, use_llm=not (args.no_llm or args.demo),
                    stories=None if args.demo else stories)
     data["feeds"] = status
+    data["fails"] = list(NR.FAILS)
     wd = WEEKDAY[now.weekday()]
     suffix = "_demo" if args.demo else ""
-    page = render_html(data, args.demo)
+    page = NR.inject_banner(render_html(data, args.demo))
     (out / "index.html").write_text(page, encoding="utf-8")
     dated = out / "archive" / f"{now:%Y-%m-%d}_{wd}{suffix}.html"
     dated.write_text(page, encoding="utf-8")

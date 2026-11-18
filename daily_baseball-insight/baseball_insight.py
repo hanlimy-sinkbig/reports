@@ -34,6 +34,9 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import baseball_data as B  # noqa: E402
 
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "_shared"))
+import net_retry as NR  # noqa: E402
+
 try:
     import requests
 except ImportError:  # pragma: no cover
@@ -49,9 +52,12 @@ def log(m):
 
 
 def get(url, **kw):
-    r = requests.get(url, timeout=25, headers=UA, **kw)
-    r.raise_for_status()
-    return r
+    """실패하면 최대 3번까지 다시 시도(_shared/net_retry.py)."""
+    def once():
+        r = requests.get(url, timeout=25, headers=UA, **kw)
+        r.raise_for_status()
+        return r
+    return NR.retry(once, url[:80])
 
 
 def season_year(now: dt.datetime) -> int:
@@ -142,6 +148,7 @@ def fetch_kbo() -> dict:
         return d
     except Exception as e:
         log(f"KBO 순위 실패: {e}")
+        NR.fail("KBO 순위", e)
         return {"date": "", "rows": [], "src": url, "error": str(e)}
 
 
@@ -208,6 +215,7 @@ def fetch_npb(year: int) -> dict:
             log(f"NPB {key}: {len(res[key])}팀")
         except Exception as e:
             log(f"NPB {key} 실패: {e}")
+            NR.fail(f"NPB {'센트럴' if key == 'central' else '퍼시픽'} 순위", e)
         res[key + "_src"] = url
     return res
 
@@ -223,6 +231,7 @@ def fetch_mlb(year: int, now: dt.datetime) -> dict:
                                       "abbr": tm.get("abbreviation", "")}
     except Exception as e:
         log(f"MLB 팀 정보 실패: {e}")
+        NR.fail("MLB 팀 정보", e)
     try:
         s = get(f"{base}/standings", params={"leagueId": "103,104", "season": year, "standingsTypes": "regularSeason"}).json()
         divs = {}
@@ -240,6 +249,7 @@ def fetch_mlb(year: int, now: dt.datetime) -> dict:
         log(f"MLB 순위: {len(res['divisions'])}개 지구")
     except Exception as e:
         log(f"MLB 순위 실패: {e}")
+        NR.fail("MLB 순위", e)
     # 어제(미국 기준) 경기 결과 — 시즌 중에만 있음
     us_day = (now - dt.timedelta(hours=14)).date() - dt.timedelta(days=1)
     for day in (us_day + dt.timedelta(days=1), us_day):
@@ -258,6 +268,7 @@ def fetch_mlb(year: int, now: dt.datetime) -> dict:
                 break
         except Exception as e:
             log(f"MLB 일정 실패: {e}")
+            NR.fail("MLB 경기 결과", e)
             break
     log(f"MLB 경기 결과: {len(res['games'])}경기 ({res['game_date'] or '없음'})")
     return res
@@ -273,6 +284,7 @@ def fetch_news(label: str, q: str, limit: int = 10, lang: str = "ko", days: int 
         root = ET.fromstring(get(url).content)
     except Exception as e:
         log(f"뉴스 실패 · {label}: {e}")
+        NR.fail(f"뉴스·{label}", e)
         return []
     out, seen = [], set()
     for it in root.iter("item"):
@@ -435,9 +447,11 @@ const D=__DATA__;
 const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const li=n=>`<li>${n.tag?`<span class="tag">${esc(n.tag)}</span>`:''}<a href="${esc(n.link)}" target="_blank" rel="noopener">${esc(n.title)}</a><span class="src">${esc(n.source)} ${esc(n.date)}</span></li>`;
 const none='<p class="muted">가져오지 못했습니다(사이트 응답 없음 또는 비시즌). 출처 링크에서 직접 확인하세요.</p>';
+const FAILS=D.fails||[];const failed=l=>FAILS.includes(l);
+const nodata='<p class="muted"><b>데이터 없음</b> — 다시 시도했지만 가져오지 못했습니다. 다음 실행 때 다시 받아 옵니다.</p>';
 document.getElementById('hl').innerHTML=D.headlines.map(li).join('')||'<li class="muted">최근 2일 기사가 없습니다.</li>';
 for(const [k,s] of Object.entries(D.news)){const el=document.getElementById('n-'+k);if(!el)continue;
- el.innerHTML=`<h3>${esc(s.label)} <span class="muted">${s.items.length}건</span></h3>`+(s.items.length?`<ul class="news">${s.items.map(li).join('')}</ul>`:`<p class="muted">최근 ${s.days}일 기사가 없습니다.</p>`);}
+ el.innerHTML=`<h3>${esc(s.label)} <span class="muted">${s.items.length}건</span></h3>`+(s.items.length?`<ul class="news">${s.items.map(li).join('')}</ul>`:failed('뉴스·'+s.label)?nodata:`<p class="muted">최근 ${s.days}일 기사가 없습니다.</p>`);}
 // KBO
 const K=D.kbo;
 document.getElementById('kbo-date').textContent=K.date?`(${K.date} 기준)`:'';
@@ -450,7 +464,7 @@ const M=D.mlb;
 document.getElementById('mlb-year').textContent=`(${D.year} 정규시즌)`;
 document.getElementById('mlb-games').innerHTML=M.games.length?`<h3>최근 경기 결과 <span class="muted">${esc(M.game_date)} (미국 현지)</span></h3><div class="tbl"><table>`+
  M.games.map(g=>{const aw=+g.as>+g.hs;return `<tr><td class="l">${aw?'<b>':''}${esc(g.away)}${aw?'</b>':''}</td><td>${esc(g.as)} : ${esc(g.hs)}</td><td class="l">${aw?'':'<b>'}${esc(g.home)}${aw?'':'</b>'}</td></tr>`}).join('')+'</table></div>'
- :'<h3>최근 경기 결과</h3><p class="muted">최근 이틀간 경기가 없습니다(비시즌 또는 휴식일).</p>';
+ :'<h3>최근 경기 결과</h3>'+(failed('MLB 경기 결과')?nodata:'<p class="muted">최근 이틀간 경기가 없습니다(비시즌 또는 휴식일).</p>');
 document.getElementById('mlb-div').innerHTML=M.divisions.length?M.divisions.map(dv=>`<div class="card tbl"><h3>${esc(dv.name)}</h3><table><tr><th>#</th><th class="l">팀</th><th>승</th><th>패</th><th>승률</th><th>GB</th></tr>`+
  dv.rows.map(r=>`<tr class="${r.rank==1?'top':''}"><td>${esc(r.rank)}</td><td class="l wrap" title="${esc(r.city)} · ${esc(r.venue)}"><b>${esc(r.team)}</b><br><span class="muted">${esc(r.venue)}</span></td><td>${esc(r.w)}</td><td>${esc(r.l)}</td><td>${esc(r.pct)}</td><td>${esc(r.gb)}</td></tr>`).join('')+'</table></div>').join(''):`<div class="card">${none}</div>`;
 // NPB
@@ -462,7 +476,7 @@ const npbT=(rows,src)=>rows.length?`<table><tr><th>순위</th><th class="l">팀<
 document.getElementById('npb-c').outerHTML=npbT(N.central,N.src_c);
 document.getElementById('npb-p').outerHTML=npbT(N.pacific,N.src_p);
 document.getElementById('npb-info').innerHTML='<tr><th class="l">구단</th><th class="l">리그</th><th class="l">연고지</th><th class="l">홈구장</th></tr>'+N.info.map(t=>`<tr><td class="l">${esc(t.name)}</td><td class="l">${esc(t.league)}</td><td class="l">${esc(t.city)}</td><td class="l">${esc(t.park)}</td></tr>`).join('');
-document.getElementById('npb-ja').innerHTML=D.npb_ja.map(li).join('')||'<li class="muted">기사가 없습니다.</li>';
+document.getElementById('npb-ja').innerHTML=D.npb_ja.map(li).join('')||(failed('뉴스·NPB 일본어')?'<li class="muted"><b>데이터 없음</b> — 가져오지 못했습니다.</li>':'<li class="muted">기사가 없습니다.</li>');
 </script></body></html>
 """
 
@@ -530,6 +544,9 @@ def render_pdf(d: dict, path: Path) -> Path:
 
     with PdfPages(path) as pdf:
         pg = Page(pdf, f"야구 인사이트 · {d['today']}", 1)
+        if d.get("fails"):
+            pg.t("※ 데이터 없음(3번 재시도 후 실패): " + ", ".join(d["fails"]), 8, "#a15c00", bold=True)
+            pg.y -= 0.006
         pg.t("① 오늘의 헤드라인", 10.5, bold=True)
         for it in d["headlines"]:
             pg.t(f"[{it['tag']}] {it['title']}  ({it['source']} {it['date']})", 8, ind=0.01, lh=0.0148, w=106, url=it["link"] or None)
@@ -620,9 +637,10 @@ def main(argv=None):
         news = {k: fetch_news(lab, q, days=B.NEWS_DAYS.get(k, 2)) for k, lab, q in B.NEWS_QUERIES}
         news["npb_ja"] = fetch_news("NPB 일본어", B.NPB_JA_QUERY, limit=8, lang="ja", days=1)
     d = build_data(kbo, npb, mlb, news, now, year)
+    d["fails"] = list(NR.FAILS)
     wd = WEEKDAY[now.weekday()]
     sfx = "_demo" if a.demo else ""
-    page = render_html(d, a.demo)
+    page = NR.inject_banner(render_html(d, a.demo))
     (out / "index.html").write_text(page, encoding="utf-8")
     dated = out / "archive" / f"{now:%Y-%m-%d}_{wd}{sfx}.html"
     dated.write_text(page, encoding="utf-8")

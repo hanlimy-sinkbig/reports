@@ -13,7 +13,7 @@
     if (h.endsWith("github.io")) return `https://raw.githubusercontent.com/${h.split(".")[0]}/${location.pathname.split("/")[1]}/market-data/data/`;
     return "data/";   // 로컬 테스트용
   })();
-  const S = { raw: [], rows: [], inst: {}, keys: [], prices: null, base: null, edits: {}, fxEdit: null, scenario: false, range: "ALL", warnings: [] };
+  const S = { raw: [], rows: [], inst: {}, keys: [], prices: null, base: null, edits: {}, fxEdit: null, scenario: false, range: "ALL", warnings: [], pFrom: "", pTo: "" };
 
   /* ───────── 형식 ───────── */
   const nf = (v, d = 0) => (v == null || !isFinite(v)) ? "–" : v.toLocaleString("ko-KR", { minimumFractionDigits: d, maximumFractionDigits: d });
@@ -310,6 +310,23 @@
     $("#tiles").innerHTML = t.map(([k, v, d, c]) => `<div class="tile"><div class="k">${k}</div><div class="v ${c}">${v}</div><div class="d ${c}">${d}</div></div>`).join("");
   }
 
+  /* ───────── 기간 · 행 수 ───────── */
+  const inPeriod = d => (!S.pFrom && !S.pTo) || (!!d && (!S.pFrom || d >= S.pFrom) && (!S.pTo || d <= S.pTo));
+  function setPeriod(p) {
+    const t = today(), d = new Date(t + "T00:00:00");
+    const back = { "1M": 1, "3M": 3, "6M": 6, "1Y": 12 }[p];
+    S.pTo = p === "ALL" ? "" : t;
+    S.pFrom = p === "ALL" ? "" : p === "YTD" ? t.slice(0, 4) + "-01-01" : (d.setMonth(d.getMonth() - back), d.toISOString().slice(0, 10));
+    $("#pFrom").value = S.pFrom; $("#pTo").value = S.pTo;
+    document.querySelectorAll("#pRanges button").forEach(x => x.classList.toggle("on", x.dataset.p === p));
+  }
+  function applyLimit(id) {
+    const sel = document.querySelector(`select.limit[data-t="${id}"]`), n = sel ? +sel.value : 0;
+    const trs = [...document.querySelectorAll(`#${id} tbody tr`)].filter(tr => !tr.classList.contains("total") && !tr.classList.contains("cash"));
+    trs.forEach((tr, i) => { tr.style.display = n && i >= n ? "none" : ""; });
+    const cnt = $(`#cnt-${id}`); if (cnt) cnt.textContent = n && trs.length > n ? `${n} / ${trs.length}행` : `${trs.length}행`;
+  }
+
   /* ───────── 표 ① ───────── */
   function fillFilters() {
     const opt = (sel, vals, lab) => { const cur = sel.value; sel.innerHTML = `<option value="">${lab}</option>` + vals.map(v => `<option value="${esc(v[0])}">${esc(v[1])}</option>`).join(""); sel.value = cur; };
@@ -320,7 +337,7 @@
   function renderT1() {
     const fm = $("#fMarket").value, ft = $("#fTicker").value, fs = $("#fSide").value;
     const head = ["날짜", "구분", "종목", "티커", "매매", "단가", "수량", "통화", "환율", "거래금액(원)", "수수료", "세금", "목표가", "손절가", "매매사유", "메모", "계좌"];
-    const rows = S.raw.filter(r => (!fm || r.market === fm) && (!ft || r.key === ft) && (!fs || r.side === fs));
+    const rows = S.raw.filter(r => inPeriod(r.date) && (!fm || r.market === fm) && (!ft || r.key === ft) && (!fs || r.side === fs));
     $("#t1").innerHTML = `<thead><tr>${head.map((h, i) => `<th class="${i < 5 || i > 13 ? "l" : ""}">${h}</th>`).join("")}</tr></thead><tbody>` +
       rows.map(r => {
         const fx = r.cur === "USD" ? (r.fx || (r.date ? fxAt(r.date) : null)) : 1;
@@ -331,6 +348,7 @@
         <td>${esc(r.cur)}</td><td${r.fxAuto ? ' class="muted" title="환율 칸이 비어 그날 시세 환율로 채움"' : ""}>${r.cur === "USD" ? nf(r.fx, 1) : ""}</td><td>${amt == null ? "" : won(amt)}</td><td>${r.fee ? px(r.fee, r.cur) : ""}</td><td>${r.tax ? px(r.tax, r.cur) : ""}</td>
         <td>${r.target != null ? px(r.target, r.cur) : ""}</td><td>${r.stop != null ? px(r.stop, r.cur) : ""}</td><td class="reason">${esc(r.reason)}</td><td class="l">${esc(r.memo)}</td><td class="l">${esc(r.account)}</td></tr>`;
       }).join("") + `</tbody>`;
+    applyLimit("t1");
   }
 
   /* ───────── 표 ②·③ ───────── */
@@ -358,15 +376,20 @@
     return h;
   }
   function renderT2() {
-    const R = S.base;
+    let R = S.base;
+    if (S.pFrom || S.pTo) {
+      const keys = new Set(S.rows.filter(r => r.key && inPeriod(r.date)).map(r => r.key));
+      R = Object.assign({}, R, { rows: R.rows.filter(r => keys.has(r.key)) });
+    }
     const head = `<thead><tr>${COLS.map(([h, k]) => `<th class="${k}">${h}</th>`).join("")}</tr></thead>`;
     $("#t2").innerHTML = head + "<tbody>" + R.rows.map(r => `<tr class="${r.qty > 0 ? "" : "closed"}">${cells(r, false)}</tr>`).join("") + totalRow(R) + "</tbody>";
     const asof = S.prices && S.prices.generated ? `시세 기준: ${S.prices.generated}` : "시세 파일 없음 → 현재가 대신 최근 체결가로 계산";
-    $("#t2hint").textContent = `${asof} · 거래량 괄호는 20일 평균 대비`;
+    $("#t2hint").textContent = `${asof} · 거래량 괄호는 20일 평균 대비${S.pFrom || S.pTo ? " · 기간 내 거래 종목만 (수량·손익은 전체 기간 기준)" : ""}`;
+    applyLimit("t2");
   }
   function editRows() {   // 표③ 현재 입력값으로 행 다시 계산
     const fx = +$("#fxEdit").value || S.base.fx;
-    const rows = S.base.rows.map(b => {
+    const rows = S.base.rows.filter(b => b.qty > 0).map(b => {
       const e = S.edits[b.key] || { qty: b.qty, avg: b.avg, price: b.price };
       const ratio = b.fxCost || (b.cur === "USD" ? fx : 1);
       const valueK = e.qty * (e.price || 0) * (b.cur === "USD" ? fx : 1), costK = e.qty * (e.avg || 0) * ratio;
@@ -380,6 +403,7 @@
     const R = editRows();
     $("#t3").innerHTML = head + "<tbody>" + R.rows.map(r => `<tr data-row="${esc(r.key)}">${cells(r, true)}</tr>`).join("") + totalRow(R) + "</tbody>";
     markChanged();
+    applyLimit("t3");
   }
   function refreshT3Derived() {   // 입력 중에는 입력칸을 다시 그리지 않고 계산 칸만 바꿈
     const R = editRows();
@@ -579,6 +603,14 @@
   });
   $("#btnForget").addEventListener("click", () => { safeSet(null); location.reload(); });
   ["#fMarket", "#fTicker", "#fSide"].forEach(s => $(s).addEventListener("change", renderT1));
+  document.querySelectorAll("select.limit").forEach(s => s.addEventListener("change", () => applyLimit(s.dataset.t)));
+  const periodChanged = () => { if (!S.base) return; renderT1(); renderT2(); };
+  $("#pRanges").addEventListener("click", ev => { const b = ev.target.closest("button"); if (!b) return; setPeriod(b.dataset.p); periodChanged(); });
+  ["#pFrom", "#pTo"].forEach(s => $(s).addEventListener("change", () => {
+    S.pFrom = $("#pFrom").value; S.pTo = $("#pTo").value;
+    document.querySelectorAll("#pRanges button").forEach(x => x.classList.toggle("on", !S.pFrom && !S.pTo && x.dataset.p === "ALL"));
+    periodChanged();
+  }));
   $("#t3").addEventListener("input", refreshT3Derived);
   $("#fxEdit").addEventListener("input", refreshT3Derived);
   $("#btnUpdate").addEventListener("click", () => {

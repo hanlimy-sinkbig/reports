@@ -36,7 +36,7 @@ h3 { font-size: 15px; margin: 0 0 2px; }
 .card { background: var(--surface); border: 1px solid var(--line); border-radius: 12px; padding: 14px 16px; margin: 12px 0; min-width: 0; }
 .card-h { display: flex; justify-content: space-between; align-items: center; gap: 10px; flex-wrap: wrap; margin-bottom: 8px; }
 .filters { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; }
-select, input[type=number] { font: inherit; border: 1px solid var(--line); border-radius: 7px; padding: 6px 8px; background: var(--surface); color: var(--text); }
+select, input[type=number], .fx input { font: inherit; border: 1px solid var(--line); border-radius: 7px; padding: 6px 8px; background: var(--surface); color: var(--text); }
 .fx input { width: 96px; background: var(--edit); }
 .tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 10px; margin-top: 12px; }
 .tile { background: var(--surface); border: 1px solid var(--line); border-radius: 12px; padding: 12px 14px; }

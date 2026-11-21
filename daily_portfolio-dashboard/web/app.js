@@ -32,6 +32,7 @@
     if (a >= 1e4) return nf(Math.round(v / 1e4)) + "만";
     return nf(Math.round(v));
   };
+  const inFmt = (v, d) => (v == null || !isFinite(v)) ? "" : (+v).toLocaleString("ko-KR", { maximumFractionDigits: d });   // 입력칸: 1,234,567.5
   const pct = (v, d = 1) => (v == null || !isFinite(v)) ? "–" : (v > 0 ? "+" : "") + (v * 100).toFixed(d) + "%";
   const signed = v => (v == null || !isFinite(v)) ? "–" : (v > 0 ? "+" : "") + nf(Math.round(v)) + "원";
   const cls = v => v > 0 ? "up" : v < 0 ? "down" : "";
@@ -484,7 +485,7 @@
   /* ───────── 표 ②·③ ───────── */
   const COLS = [["종목", "l"], ["구분", "l"], ["보유수량", ""], ["평균단가", ""], ["현재가", ""], ["등락률", ""], ["거래량", ""], ["평가금액", ""], ["매입금액", ""], ["평가손익", ""], ["수익률", ""], ["비중", ""], ["실현손익", ""], ["목표가 / 손절가", ""]];
   function cells(r, editable) {
-    const ed = (f, v, d) => editable ? `<td class="edit" data-k="${esc(r.key)}" data-f="${f}"><input type="number" step="any" inputmode="decimal" value="${v == null ? "" : +(+v).toFixed(d)}"></td>` : null;
+    const ed = (f, v, d) => editable ? `<td class="edit" data-k="${esc(r.key)}" data-f="${f}"><input type="text" inputmode="decimal" data-d="${d}" value="${inFmt(v, d)}"></td>` : null;
     const c = (col, html, k) => `<td class="${k || ""}" data-c="${col}">${html}</td>`;
     const tgt = `${r.target != null ? px(r.target, r.cur) : "–"} / ${r.stop != null ? px(r.stop, r.cur) : "–"}`;
     const vol = r.volume != null ? `${short(r.volume)}${r.avgVol ? ` <small class="${r.volume > r.avgVol * 1.5 ? "up" : ""}">(${(r.volume / r.avgVol * 100).toFixed(0)}%)</small>` : ""}` : "–";
@@ -521,7 +522,7 @@
     applyLimit("t2");
   }
   function editRows() {   // 표③ 현재 입력값으로 행 다시 계산
-    const fx = +$("#fxEdit").value || S.base.fx;
+    const fx = num($("#fxEdit").value) || S.base.fx;
     const rows = S.base.rows.filter(b => b.qty > 0).map(b => {
       const e = S.edits[b.key] || { qty: b.qty, avg: b.avg, price: b.price };
       const ratio = b.fxCost || (b.cur === "USD" ? fx : 1);
@@ -560,7 +561,7 @@
       const b = S.base.rows.find(r => r.key === td.dataset.k), v = num(td.querySelector("input").value), o = b[td.dataset.f];
       td.classList.toggle("changed", v != null && o != null ? Math.abs(v - o) > Math.abs(o) * 1e-9 + 1e-9 : v !== o);
     });
-    const fx = +$("#fxEdit").value; $("#fxEdit").parentElement.classList.toggle("changed", Math.abs(fx - S.base.fx) > 1e-6);
+    const fx = num($("#fxEdit").value) || 0; $("#fxEdit").parentElement.classList.toggle("changed", Math.abs(fx - S.base.fx) > 1e-6);
   }
 
   /* ───────── 추세 ───────── */
@@ -833,7 +834,7 @@
       add("todo", "시세를 찾지 못한 종목", `${noPx.map(k => `${esc(S.inst[k].name)}(${esc(k)})`).join(", ")} → 매매일지의 티커 표기를 확인하세요. 국내는 6자리 종목코드(005930), 미국은 야후 티커(AAPL, BRK-B)입니다.${pend ? ` 지금은 전체 시세를 처음 채우는 중이라(남은 종목 ${nf(S.prices.meta.pending)}개) 다음 실행 후 나타날 수도 있습니다.` : " 상장폐지·장외 종목은 수집 대상이 아닙니다."}`);
     }
     const noReason = S.rows.filter(r => (r.side === "BUY" || r.side === "SELL") && !hasReason(r)).length;
-    if (noReason) add("todo", `매매사유 빈칸 ${noReason}건`, "매수·매도 이유를 한 줄이라도 남겨 두면 손절·목표가 판단과 복기에 큰 도움이 됩니다.");
+    if (noReason) add("todo", `매매사유 빈칸 ${nf(noReason)}건`, "매수·매도 이유를 한 줄이라도 남겨 두면 손절·목표가 판단과 복기에 큰 도움이 됩니다.");
     $("#advice").innerHTML = A.join("") || '<li class="info"><b>특이사항 없음</b>현재 규칙에 걸리는 항목이 없습니다.</li>';
   }
 
@@ -851,7 +852,7 @@
     applySplits();
     S.edits = {}; S.fxEdit = null; S.scenario = false;
     S.base = simulate(false);
-    $("#fxEdit").value = +S.base.fx.toFixed(1);
+    $("#fxEdit").value = inFmt(S.base.fx, 1);
     $("#app").hidden = false; $("#btnForget").hidden = !fromStorage && !safeGet();
     fillFilters(); renderT1(); renderT2(); renderT3(); renderAll();
     const first = S.rows[0] ? S.rows[0].date : "", last = S.rows.length ? S.rows[S.rows.length - 1].date : "";
@@ -952,15 +953,19 @@
   }));
   $("#t3").addEventListener("input", refreshT3Derived);
   $("#fxEdit").addEventListener("input", refreshT3Derived);
+  // 입력칸에서 나오면 천 단위 쉼표로 다시 표시 (쉼표 있이 입력해도, 없이 입력해도 됨)
+  const reFmt = el => { const v = num(el.value); if (v != null) el.value = inFmt(v, +(el.dataset.d || 1)); };
+  $("#t3").addEventListener("focusout", ev => { if (ev.target.tagName === "INPUT") reFmt(ev.target); });
+  $("#fxEdit").addEventListener("blur", ev => reFmt(ev.target));
   $("#btnUpdate").addEventListener("click", () => {
-    S.edits = readEdits(); S.fxEdit = +$("#fxEdit").value || S.base.fx;
+    S.edits = readEdits(); S.fxEdit = num($("#fxEdit").value) || S.base.fx;
     const changed = S.base.rows.some(b => { const e = S.edits[b.key]; return e.qty !== b.qty || Math.abs((e.avg || 0) - (b.avg || 0)) > 1e-9 || Math.abs((e.price || 0) - (b.price || 0)) > 1e-9; }) || Math.abs(S.fxEdit - S.base.fx) > 1e-6;
     S.scenario = changed; renderAll();
     document.querySelector(".sec").scrollIntoView({ behavior: "smooth" });
   });
   $("#btnReset").addEventListener("click", () => {
     S.edits = {}; S.fxEdit = null; S.scenario = false;
-    $("#fxEdit").value = +S.base.fx.toFixed(1); renderT3(); renderAll();
+    $("#fxEdit").value = inFmt(S.base.fx, 1); renderT3(); renderAll();
   });
   $("#ranges").addEventListener("click", ev => {
     const b = ev.target.closest("button"); if (!b) return;

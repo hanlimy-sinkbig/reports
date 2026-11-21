@@ -192,8 +192,31 @@
         if (!ratio || ratio === 1) return;
         S.rows.forEach(r => { if (r.key === k && r.date < d && (r.side === "BUY" || r.side === "SELL" || r.side === "DIV" || r.side === "TIN")) { r.aqty *= ratio; r.aprice /= ratio; } });
         S.inst[k].splitNote = (S.inst[k].splitNote ? S.inst[k].splitNote + ", " : "") + `${d} 1:${ratio} 분할 반영`;
+        adjustHistory(k, d, ratio);
       });
     });
+  }
+
+  /* 시세 파일은 날마다 이어 붙여 저장하므로, 분할 이전 구간이 분할 전 가격 그대로 남아 있을 수 있음.
+     분할일 ±15일 안에서 '전날 종가 ÷ 당일 종가 ≈ 분할 비율'인 급락 지점을 찾으면 그 이전 시세를 비율로 나눠 맞춤.
+     (이미 보정된 시세면 그런 지점이 없어 그대로 둠) */
+  function adjustHistory(k, d, ratio) {
+    const h = histOf(k); if (!h || h.close.length < 2) return;
+    const day = 864e5, t0 = new Date(d + "T00:00:00").getTime();
+    const lo = new Date(t0 - 15 * day).toISOString().slice(0, 10), hi = new Date(t0 + 15 * day).toISOString().slice(0, 10);
+    let j = -1;
+    for (let i = 1; i < h.dates.length; i++) {
+      if (h.dates[i] < lo || h.dates[i] > hi || !h.close[i]) continue;
+      const q = h.close[i - 1] / h.close[i];
+      if (q > ratio * 0.7 && q < ratio * 1.4) { j = i; break; }
+    }
+    if (j < 0) return;
+    const c = h.close.slice();             // 캐시 원본은 건드리지 않음 (다시 불러올 때 이중 보정 방지)
+    for (let i = 0; i < j; i++) c[i] = c[i] / ratio;
+    h.close = c;
+    const t = S.prices.tickers[k];
+    if (j === c.length - 1 && t.prev != null) t.prev = t.prev / ratio;
+    S.inst[k].splitNote += " · 분할 전 시세 보정";
   }
 
   /* ───────── 시세 ───────── */
@@ -351,7 +374,8 @@
   function renderT1() {
     const fm = $("#fMarket").value, ft = $("#fTicker").value, fs = $("#fSide").value;
     const head = ["날짜", "구분", "종목", "티커", "매매", "단가", "수량", "통화", "환율", "거래금액(원)", "수수료", "세금", "목표가", "손절가", "매매사유", "메모", "계좌"];
-    const rows = S.raw.filter(r => inPeriod(r.date) && (!fm || r.market === fm) && (!ft || r.key === ft) && (!fs || r.side === fs));
+    const rows = S.raw.filter(r => inPeriod(r.date) && (!fm || r.market === fm) && (!ft || r.key === ft) && (!fs || r.side === fs))
+      .map((r, i) => [r, i]).sort((a, b) => (b[0].date || "").localeCompare(a[0].date || "") || b[1] - a[1]).map(x => x[0]);   // 최신 거래가 위로
     $("#t1").innerHTML = `<thead><tr>${head.map((h, i) => `<th class="${i < 5 || i > 13 ? "l" : ""}">${h}</th>`).join("")}</tr></thead><tbody>` +
       rows.map(r => {
         const fx = r.cur === "USD" ? (r.fx || (r.date ? fxAt(r.date) : null)) : 1;

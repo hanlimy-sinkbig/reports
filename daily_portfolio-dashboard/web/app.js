@@ -18,8 +18,9 @@
     if (h.endsWith("github.io")) return `https://raw.githubusercontent.com/${h.split(".")[0]}/${location.pathname.split("/")[1]}/journal/journal.enc.json`;
     return "journal.enc.json";
   })();
-  const PW_KEY = "pf_pw_v1";
-  const S = { raw: [], rows: [], inst: {}, keys: [], prices: null, base: null, edits: {}, fxEdit: null, scenario: false, range: "ALL", warnings: [], pFrom: "", pTo: "" };
+  const TGT_URL = ENC_URL.replace("journal.enc.json", "targets.enc.json");   // 목표가격.csv (손절가·목표가·매수이유)
+  const PW_KEY = "pf_pw_v1", TGT_KEY = "pf_tgt_v1";
+  const S = { raw: [], rows: [], inst: {}, keys: [], prices: null, base: null, edits: {}, fxEdit: null, scenario: false, range: "ALL", warnings: [], pFrom: "", pTo: "", targets: null, tgtUpdated: "" };
 
   /* ───────── 형식 ───────── */
   const nf = (v, d = 0) => (v == null || !isFinite(v)) ? "–" : v.toLocaleString("ko-KR", { minimumFractionDigits: d, maximumFractionDigits: d });
@@ -87,7 +88,7 @@
     const col = {};
     for (const k in ALIAS) col[k] = head.findIndex(h => ALIAS[k].some(a => h.toLowerCase() === a.toLowerCase()));
     if (col.date < 0 || col.side < 0 || col.price < 0) throw new Error("필수 열(날짜·매매·단가)을 찾지 못했습니다. 첫 줄 제목을 확인하세요.");
-    S.warnings = []; S.raw = []; S.rows = [];
+    S.warnings = S.tgtWarn ? [S.tgtWarn] : []; S.raw = []; S.rows = [];
     grid.slice(1).forEach((r, i) => {
       const g = k => col[k] >= 0 ? (r[col[k]] ?? "").trim() : "";
       const rec = {
@@ -116,7 +117,44 @@
       if (r.side === "BUY" && r.reason) I.thesis = r.reason;
     });
     if (S.keys.length > 8) S.warnings.push("종목이 8개를 넘어 9번째부터는 색이 반복됩니다.");
+    applyTargets();
   }
+
+  /* ───────── 목표가격.csv ─────────
+     티커별 손절가·목표가·매수이유. 매매일지 행에 적힌 값보다 우선 (빈칸이면 매매일지 값 유지) */
+  function normTicker(t) {
+    t = String(t || "").trim().toUpperCase();
+    if (/^\d{1,6}$/.test(t)) return t.padStart(6, "0");
+    return /^[0-9][0-9A-Z]{5}$/.test(t) ? t : t.replace(/[./\s]/g, "-");
+  }
+  function parseTargets(text) {
+    const grid = parseCSV(text); if (grid.length < 2) return {};
+    const head = grid[0].map(h => h.trim()), ci = n => head.indexOf(n);
+    const c = { tk: ci("티커"), stop: ci("손절가"), target: ci("목표가"), thesis: ci("매수이유"), date: ci("정한날짜"), memo: ci("메모") };
+    if (c.tk < 0) return {};
+    const out = {};
+    grid.slice(1).forEach(r => {
+      const g = k => c[k] >= 0 ? (r[c[k]] ?? "").trim() : "", k = normTicker(g("tk"));
+      if (k) out[k] = { stop: num(g("stop")), target: num(g("target")), thesis: g("thesis"), date: g("date"), memo: g("memo") };
+    });
+    return out;
+  }
+  function applyTargets() {
+    if (!S.targets) return;
+    let n = 0;
+    S.keys.forEach(k => {
+      const t = S.targets[k], I = S.inst[k]; if (!t) return;
+      if (t.stop != null) I.stop = t.stop;
+      if (t.target != null) I.target = t.target;
+      if (t.thesis) I.thesis = t.thesis;
+      if (t.date) I.tgtDate = t.date;
+      n++;
+    });
+    S.tgtMatched = n;
+  }
+  const tgtGet = () => { try { return localStorage.getItem(TGT_KEY); } catch (e) { return null; } };
+  const tgtSet = v => { try { v == null ? localStorage.removeItem(TGT_KEY) : localStorage.setItem(TGT_KEY, v); } catch (e) { } };
+  function loadTargetsText(text, updated) { S.targets = parseTargets(text); S.tgtUpdated = updated || S.tgtUpdated; tgtSet(JSON.stringify({ text, updated: S.tgtUpdated })); }
 
   /* ───────── 시세 파일 읽기 ───────── */
   const fileCache = {};
@@ -692,6 +730,14 @@
     if (live.length) {
       const withStop = live.filter(r => r.stop != null).length, cov = withStop / live.length;
       add(lv(cov, 0.99, 0.49), "손절가 입력률", `${withStop} / ${live.length}종목`, cov === 1 ? "모든 보유 종목에 손절가가 있습니다" : `손절가 없음: ${live.filter(r => r.stop == null).map(r => r.name).join(", ")}`, "보유 종목 중 손절가 칸을 채운 비율 · 전부 양호 · 절반 미만 위험");
+      const ws = live.filter(r => r.stop != null && r.price != null);
+      if (ws.length) {
+        const gap = r => r.price / r.stop - 1, hit = ws.filter(r => gap(r) <= 0), near = ws.filter(r => gap(r) > 0 && gap(r) <= 0.05);
+        const st = hit.length ? "r" : near.length ? "y" : "g";
+        const list = (hit.length ? hit : near.length ? near : [...ws].sort((a, b) => gap(a) - gap(b)).slice(0, 2))
+          .map(r => `${r.name} ${px(r.price, r.cur)} / 손절 ${px(r.stop, r.cur)} (${pct(gap(r))})`).join(" · ");
+        add(st, "손절가 이탈", hit.length ? `${hit.length}종목 이탈` : near.length ? `${near.length}종목 근접` : "이탈 없음", list, "현재가가 손절가 이하면 위험 · 5% 안이면 주의 (목표가격.csv 값 우선)");
+      } else add("n", "손절가 이탈", "–", "손절가가 정해진 보유 종목이 없습니다", "목표가격.csv에 손절가를 적으면 여기서 감시합니다");
       const worst = live.reduce((a, r) => r.ret != null && (a == null || r.ret < a.ret) ? r : a, null);
       const deep = live.filter(r => r.ret != null && r.ret <= -0.2), noStop = deep.filter(r => r.stop == null || r.price <= r.stop);
       add(lv(worst && worst.ret, -0.15, -0.3), "손실 방치", worst ? pct(worst.ret) : "–", deep.length ? `−20% 넘는 종목 ${deep.length}개${noStop.length ? ` · 그중 ${noStop.length}개는 손절가 없음/이탈` : ""}` : `가장 나쁜 종목: ${worst ? worst.name : "–"}`, "가장 나쁜 보유 종목 수익률 · −15% 위 양호 · −30% 이하 위험");
@@ -809,7 +855,7 @@
     $("#app").hidden = false; $("#btnForget").hidden = !fromStorage && !safeGet();
     fillFilters(); renderT1(); renderT2(); renderT3(); renderAll();
     const first = S.rows[0] ? S.rows[0].date : "", last = S.rows.length ? S.rows[S.rows.length - 1].date : "";
-    $("#asof").textContent = `매매 ${S.rows.length}건 · ${first} ~ ${last} · 종목 ${S.keys.length}개 · ${S.prices && S.prices.generated ? "시세 " + S.prices.generated : "시세 파일 없음"}`;
+    $("#asof").textContent = `매매 ${S.rows.length}건 · ${first} ~ ${last} · 종목 ${S.keys.length}개 · ${S.prices && S.prices.generated ? "시세 " + S.prices.generated : "시세 파일 없음"}${S.targets ? ` · 목표가격 ${S.tgtMatched || 0}종목${S.tgtUpdated ? ` (${S.tgtUpdated})` : ""}` : ""}`;
     showWarn(S.warnings);
   }
   function showWarn(list) { const w = $("#warn"); w.hidden = !list.length; w.innerHTML = list.map(esc).join("<br>"); }
@@ -839,6 +885,10 @@
   function showPw(on, msg) { $("#pwBox").hidden = !on; if (on) $("#pwOk").hidden = true; if (msg) showWarn([msg]); if (on) $("#pw").focus(); }
   async function openEncrypted(pw) {
     const text = decode(await decryptJournal(S.enc, pw));
+    if (S.tgtEnc) {   // 목표가격.csv: 실패해도 매매일지는 그대로 열기
+      try { loadTargetsText(decode(await decryptJournal(S.tgtEnc, pw)), S.tgtEnc.updated); S.tgtWarn = ""; }
+      catch (e) { S.tgtWarn = "목표가격 파일을 풀지 못해 매매일지에 적힌 목표가·손절가만 사용합니다."; }
+    }
     pwSet(pw); safeSet(text); showPw(false); showWarn([]);
     await start(text, true);
     $("#asof").textContent = `자동 불러옴 (맥 동기화 ${S.enc.updated || "?"}) · ` + $("#asof").textContent;
@@ -850,6 +900,8 @@
       if (!r.ok) return false;
       S.enc = await r.json();
     } catch (e) { return false; }
+    try { const t = await fetch(TGT_URL + "?t=" + Date.now(), { cache: "no-store" }); S.tgtEnc = t.ok ? await t.json() : null; }
+    catch (e) { S.tgtEnc = null; }
     const pw = pwGet();
     if (!pw) { showPw(true); return false; }
     try { await openEncrypted(pw); return true; }
@@ -865,7 +917,7 @@
     const r = await fetch("sample.csv", { cache: "no-store" }); await start(decode(await r.arrayBuffer()), false);
     $("#asof").textContent = "샘플 데이터 · " + $("#asof").textContent;
   });
-  $("#btnForget").addEventListener("click", () => { safeSet(null); pwSet(null); location.reload(); });
+  $("#btnForget").addEventListener("click", () => { safeSet(null); pwSet(null); tgtSet(null); location.reload(); });
   const submitPw = async () => {
     const pw = $("#pw").value; if (!pw || !S.enc) return;
     try { await openEncrypted(pw); $("#pw").value = ""; } catch (e) { showWarn([e.message]); $("#pw").select(); }
@@ -920,6 +972,7 @@
   (async function init() {
     const m = await getJSON("_meta");
     $("#foot").textContent = m ? `시세 갱신: ${m.generated} · 수집 종목 ${nf(m.total)}개 (코스피·코스닥·국내 ETF·미국 상장 주식/ETF, 평일 2회)${m.pending ? ` · 처음 채우는 중, 남은 ${nf(m.pending)}개` : ""}${m.missed ? ` · ⚠ 이번 갱신에서 ${nf(m.missed)}개 종목은 받지 못해 지난 종가 유지` : ""}` : "시세 파일이 아직 없습니다. Actions 실행 후 생깁니다.";
+    try { const t = JSON.parse(tgtGet() || "null"); if (t && t.text) { S.targets = parseTargets(t.text); S.tgtUpdated = t.updated || ""; } } catch (e) { }
     const saved = safeGet();
     if (saved) await start(saved, true);          // 이전 내용 먼저 보여 주고
     await tryAuto();                               // 최신 암호화 매매일지로 교체

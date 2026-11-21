@@ -672,12 +672,13 @@
     if (!j.gz) return pt.buffer;
     return await new Response(new Blob([pt]).stream().pipeThrough(new DecompressionStream("gzip"))).arrayBuffer();
   }
-  function showPw(on, msg) { $("#pwBox").hidden = !on; if (msg) showWarn([msg]); if (on) $("#pw").focus(); }
+  function showPw(on, msg) { $("#pwBox").hidden = !on; if (on) $("#pwOk").hidden = true; if (msg) showWarn([msg]); if (on) $("#pw").focus(); }
   async function openEncrypted(pw) {
     const text = decode(await decryptJournal(S.enc, pw));
     pwSet(pw); safeSet(text); showPw(false); showWarn([]);
     await start(text, true);
     $("#asof").textContent = `자동 불러옴 (맥 동기화 ${S.enc.updated || "?"}) · ` + $("#asof").textContent;
+    const ok = $("#pwOk"); ok.textContent = `🔓 자동 불러오기 켜짐 · 동기화 ${S.enc.updated || "?"}`; ok.hidden = false;
   }
   async function tryAuto() {
     try {
@@ -706,6 +707,7 @@
     try { await openEncrypted(pw); $("#pw").value = ""; } catch (e) { showWarn([e.message]); $("#pw").select(); }
   };
   $("#btnPw").addEventListener("click", submitPw);
+  $("#pwOk").addEventListener("click", () => showPw(true));
   $("#pw").addEventListener("keydown", ev => { if (ev.key === "Enter") submitPw(); });
   ["#fMarket", "#fTicker", "#fSide"].forEach(s => $(s).addEventListener("change", renderT1));
   document.querySelectorAll("select.limit").forEach(s => s.addEventListener("change", () => applyLimit(s.dataset.t)));

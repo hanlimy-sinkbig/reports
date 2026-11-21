@@ -110,3 +110,5 @@ code { font-size: 12px; background: var(--grid); padding: 1px 5px; border-radius
 .cnt { color: var(--text2); font-size: 12px; white-space: nowrap; }
 .pwbox { display: inline-flex; gap: 6px; align-items: center; }
 .pwbox input { font: inherit; border: 1px solid var(--line); border-radius: 7px; padding: 6px 8px; background: var(--surface); color: var(--text); width: 160px; }
+.pwbox[hidden], .pwok[hidden] { display: none; }   /* display 지정이 hidden 속성을 덮어쓰지 않게 */
+.pwok { font-size: 13px; color: var(--text2); border: 1px solid var(--line); border-radius: 99px; padding: 5px 12px; cursor: pointer; white-space: nowrap; }

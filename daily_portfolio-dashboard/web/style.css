@@ -101,3 +101,4 @@ td.edit.changed { background: var(--edit-on); }
 .fx.changed input { background: var(--edit-on); }
 code { font-size: 12px; background: var(--grid); padding: 1px 5px; border-radius: 4px; }
 @media (max-width: 520px) { .tile .v { font-size: 17px; } .tiles { grid-template-columns: 1fr 1fr; } }
+#t1 td.muted { color: var(--muted); }

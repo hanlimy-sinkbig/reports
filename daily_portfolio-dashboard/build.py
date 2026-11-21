@@ -11,7 +11,7 @@
 저장 (data 폴더 → market-data 브랜치, 페이지는 raw.githubusercontent.com 에서 읽음)
   data/<키>.json   종목 하나: 일별 종가(액면분할 조정)·최근 거래량·분할 기록
                    키 = 국내 6자리 코드(005930), 미국은 야후 티커(LRCX, BRK-B)
-  data/_fx.json    USD/KRW
+  data/_fx.json    USD/KRW (10년치)
   data/_meta.json  수집 시각·종목 수·실패 수
   data/_universe.json  수집 대상 목록 (목록 받기 실패 시 이전 목록 재사용)
 
@@ -298,7 +298,7 @@ def run(data: Path, backfill_cap: int, chunk_new: int = 80, chunk_upd: int = 250
     stats["pending"] = max(0, len(news) - (len(todo) - len(refetch)))
 
     # 2-3. 환율
-    fr = frames(download(["KRW=X"], period="2y"), ["KRW=X"])
+    fr = frames(download(["KRW=X"], period="10y"), ["KRW=X"])   # 매매일지가 2년보다 길 수 있어 환율은 넉넉히
     stats["fx_ok"] = "KRW=X" in fr
     if "KRW=X" in fr:
         d, c, v, sp = to_series(fr["KRW=X"])

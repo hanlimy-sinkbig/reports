@@ -155,12 +155,31 @@
     if (S.prices.meta && S.prices.meta.fx_ok === false) S.warnings.push("환율 데이터 없음(이번 갱신 실패) → 지난 환율로 계산");
   }
 
-  /* 액면분할: 시세 파일(야후 분할 기록)과 CSV '분할' 행을 반영해 분할 이전 매매의 수량·단가를 조정 */
+  /* 환율 칸이 빈 미장 행: 시세 환율(_fx.json)의 그날(없으면 직전 거래일) 값으로 채움 */
+  function fillFx() {
+    const h = S.prices && S.prices.fx && S.prices.fx.history;
+    if (!h || !h.dates.length) return;
+    S.rows.forEach(r => {
+      if (r.cur !== "USD" || r.fx) return;
+      const i = lastLE(h.dates, r.date);
+      r.fx = h.close[Math.max(i, 0)]; r.fxAuto = true;
+    });
+    const early = S.rows.filter(r => r.fxAuto && r.date < h.dates[0]).length;
+    if (early) S.warnings.push(`환율 시세가 ${h.dates[0]}부터라 그 이전 미장 ${early}건은 ${h.dates[0]} 환율로 계산`);
+  }
+
+  /* 분할 비율: 키움 자동입력은 수량=비율(단가 0), 예전 형식은 단가=비율 */
+  const splitRatio = r => r.price > 0 ? r.price : r.qty;
+
+  /* 액면분할: 시세 파일(야후 분할 기록)과 CSV '분할' 행을 반영해 분할 이전 매매의 수량·단가를 조정.
+     같은 분할이 양쪽에 있으면(비율 같고 날짜 ±10일, 입고일과 분할일이 다를 수 있음) CSV 쪽만 적용해 이중 반영을 막음 */
   function applySplits() {
     S.rows.forEach(r => { r.aqty = r.qty; r.aprice = r.price; });
+    const near = (a, b) => Math.abs(new Date(a) - new Date(b)) <= 10 * 864e5;
     S.keys.forEach(k => {
-      const manual = S.rows.filter(r => r.key === k && r.side === "SPLIT").map(r => [r.date, r.price]);
-      const auto = ((S.prices && S.prices.tickers[k] && S.prices.tickers[k].splits) || []).filter(([d]) => !manual.some(m => m[0] === d));
+      const manual = S.rows.filter(r => r.key === k && r.side === "SPLIT").map(r => [r.date, splitRatio(r)]);
+      const auto = ((S.prices && S.prices.tickers[k] && S.prices.tickers[k].splits) || [])
+        .filter(([d, x]) => !manual.some(([md, mx]) => near(md, d) && Math.abs(mx / x - 1) < 0.01));
       [...manual, ...auto].forEach(([d, ratio]) => {
         if (!ratio || ratio === 1) return;
         S.rows.forEach(r => { if (r.key === k && r.date < d && (r.side === "BUY" || r.side === "SELL" || r.side === "DIV")) { r.aqty *= ratio; r.aprice /= ratio; } });
@@ -299,11 +318,11 @@
     $("#t1").innerHTML = `<thead><tr>${head.map((h, i) => `<th class="${i < 5 || i > 13 ? "l" : ""}">${h}</th>`).join("")}</tr></thead><tbody>` +
       rows.map(r => {
         const fx = r.cur === "USD" ? (r.fx || (r.date ? fxAt(r.date) : null)) : 1;
-        const amt = r.price != null ? r.price * r.qty * (fx || 0) : null;
+        const amt = r.price != null && r.side !== "SPLIT" ? r.price * r.qty * (fx || 0) : null;
         const tag = r.side === "BUY" ? "buy" : r.side === "SELL" ? "sell" : "";
         return `<tr><td class="l">${esc(r.date || "?")}</td><td class="l">${esc(r.market)}</td><td class="l">${esc(r.name)}</td><td class="l">${esc(r.ticker)}</td>
-        <td class="l"><span class="tag ${tag}">${esc(SIDE_KO[r.side] || r.sideRaw)}</span></td><td>${r.side === "DEP" || r.side === "WD" ? won(r.price) : px(r.price, r.cur)}</td><td>${nf(r.qty, r.qty % 1 ? 4 : 0)}</td>
-        <td>${esc(r.cur)}</td><td>${r.cur === "USD" ? nf(r.fx, 1) : ""}</td><td>${won(amt)}</td><td>${r.fee ? px(r.fee, r.cur) : ""}</td><td>${r.tax ? px(r.tax, r.cur) : ""}</td>
+        <td class="l"><span class="tag ${tag}">${esc(SIDE_KO[r.side] || r.sideRaw)}</span></td><td>${r.side === "DEP" || r.side === "WD" ? won(r.price) : r.side === "SPLIT" ? "1:" + nf(splitRatio(r), splitRatio(r) % 1 ? 4 : 0) : px(r.price, r.cur)}</td><td>${nf(r.qty, r.qty % 1 ? 4 : 0)}</td>
+        <td>${esc(r.cur)}</td><td${r.fxAuto ? ' class="muted" title="환율 칸이 비어 그날 시세 환율로 채움"' : ""}>${r.cur === "USD" ? nf(r.fx, 1) : ""}</td><td>${amt == null ? "" : won(amt)}</td><td>${r.fee ? px(r.fee, r.cur) : ""}</td><td>${r.tax ? px(r.tax, r.cur) : ""}</td>
         <td>${r.target != null ? px(r.target, r.cur) : ""}</td><td>${r.stop != null ? px(r.stop, r.cur) : ""}</td><td class="reason">${esc(r.reason)}</td><td class="l">${esc(r.memo)}</td><td class="l">${esc(r.account)}</td></tr>`;
       }).join("") + `</tbody>`;
   }
@@ -528,6 +547,7 @@
     try { ingest(text); } catch (e) { showWarn([e.message]); return; }
     $("#asof").textContent = `시세 불러오는 중… (${S.keys.length}종목)`;
     await loadQuotes(S.keys);
+    fillFx();
     applySplits();
     S.edits = {}; S.fxEdit = null; S.scenario = false;
     S.base = simulate(false);

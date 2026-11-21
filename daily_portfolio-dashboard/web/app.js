@@ -313,6 +313,12 @@
       ["현금", R.hasCash ? won(R.cash) : "–", R.hasCash && R.asset > 0 ? `자산의 ${(R.cash / R.asset * 100).toFixed(1)}%` : "입금 행을 넣으면 계산", ""],
       ["USD/KRW", nf(R.fx, 1), S.prices ? "시세 기준" : "체결 환율 기준", ""]
     ];
+    if ((S.pFrom || S.pTo) && R.tl && R.tl.dates.length) {   // 선택 기간 동안의 손익 변화
+      const s = sliceRange(R.tl), L = s.dates.length - 1;
+      const v = i => R.hasCash ? s.asset[i] - s.dep[i] : (s.unreal[i] || 0) + (s.realCum[i] || 0);
+      const p = L >= 0 ? v(L) - v(0) : null;
+      t.unshift(["선택 기간 손익", signed(p), `${s.dates[0] || ""} ~ ${s.dates[L] || ""}`, cls(p)]);
+    }
     $("#tiles").innerHTML = t.map(([k, v, d, c]) => `<div class="tile"><div class="k">${k}</div><div class="v ${c}">${v}</div><div class="d ${c}">${d}</div></div>`).join("");
   }
 
@@ -450,7 +456,12 @@
     o.i0 = i0; return o;
   }
   function renderCharts(R) {
-    const t = sliceRange(R.tl), held = S.keys.filter(k => t.r[k].some(v => v != null));
+    const t = sliceRange(R.tl), d0 = t.dates[0], d1 = t.dates[t.dates.length - 1];
+    // 이 기간에 직접 사고판 종목만 라벨로 표시 (보유만 하고 거래 없는 종목은 비중 그래프에서 '기타 보유'로 묶음)
+    const traded = new Set(S.rows.filter(r => r.key && r.date >= d0 && r.date <= d1 && ["BUY", "SELL", "TIN", "SPLIT"].includes(r.side)).map(r => r.key));
+    const held = S.keys.filter(k => traded.has(k) && t.r[k].some(v => v != null));
+    const wKeys = S.keys.filter(k => traded.has(k) && t.w[k].some(v => v > 0));
+    const others = S.keys.filter(k => !traded.has(k) && t.w[k].some(v => v > 0));
     const mk = S.scenario ? { index: t.dates.length - 1, label: "시나리오" } : null;
     const ser = [{ name: R.hasCash ? "총자산" : "평가금액", color: "var(--s1)", values: t.asset }];
     if (R.hasCash) ser.push({ name: "평가금액", color: "var(--s2)", values: t.value });
@@ -464,7 +475,9 @@
         { name: "누적 실현손익", color: "var(--s2)", values: t.realCum },
         { name: "합계", color: "var(--s7)", values: t.unreal.map((v, i) => v + t.realCum[i]) }], fmt: short, tipFmt: signed, marker: mk, height: 260
     });
-    Charts.line($("#cWeight"), { dates: t.dates, series: S.keys.map(k => ({ name: S.inst[k].name, color: S.inst[k].color, values: t.w[k] })), stack100: true, marker: mk });
+    const wSer = wKeys.map(k => ({ name: S.inst[k].name, color: S.inst[k].color, values: t.w[k] }));
+    if (others.length) wSer.push({ name: `기타 보유 ${others.length}종목`, color: "var(--muted)", values: t.dates.map((_, i) => others.reduce((a, k) => a + (t.w[k][i] || 0), 0)) });
+    Charts.line($("#cWeight"), { dates: t.dates, series: wSer, stack100: true, marker: mk });
     Charts.line($("#cRet"), { dates: t.dates, series: held.map(k => ({ name: S.inst[k].name, color: S.inst[k].color, values: t.r[k] })), fmt: v => Math.round(v) + "%", tipFmt: v => (v > 0 ? "+" : "") + v.toFixed(1) + "%", marker: mk });
     // 수익률·낙폭
     let peak = -Infinity; const dd = t.ret.map(v => { if (v == null) return null; const idx = 1 + v / 100; peak = Math.max(peak, idx); return (idx / peak - 1) * 100; });
@@ -498,17 +511,29 @@
     renderStats(R);
   }
   function renderStats(R) {
-    const tr = R.trades, win = tr.filter(x => x.pnl > 0), loss = tr.filter(x => x.pnl < 0);
+    const on = !!(S.pFrom || S.pTo);
+    const tr = on ? R.trades.filter(x => inPeriod(x.date)) : R.trades, win = tr.filter(x => x.pnl > 0), loss = tr.filter(x => x.pnl < 0);
     const aw = win.length ? win.reduce((a, x) => a + x.pnl, 0) / win.length : null, al = loss.length ? loss.reduce((a, x) => a + x.pnl, 0) / loss.length : null;
     R.stat = { n: tr.length, win: win.length, aw, al };
+    let feeTax = R.fees + R.taxes, divSum = R.div;
+    if (on) {
+      feeTax = 0; divSum = 0;
+      S.rows.forEach(r => {
+        if (!inPeriod(r.date)) return;
+        const f = r.cur === "USD" ? (r.fx || fxAt(r.date) || R.fx) : 1;
+        feeTax += ((r.fee || 0) + (r.tax || 0)) * f;
+        if (r.side === "DIV") divSum += (r.price || 0) * (r.qty || 0) * f;
+      });
+    }
     const best = tr.reduce((a, x) => !a || x.pnl > a.pnl ? x : a, null), worst = tr.reduce((a, x) => !a || x.pnl < a.pnl ? x : a, null);
     const s = [
       ["매도 횟수", `${tr.length}회`], ["승률", tr.length ? `${(win.length / tr.length * 100).toFixed(0)}% (${win.length}승 ${loss.length}패)` : "–"],
       ["평균 이익", aw != null ? signed(aw) : "–"], ["평균 손실", al != null ? signed(al) : "–"],
       ["손익비", aw != null && al ? (aw / -al).toFixed(2) + " : 1" : "–"], ["최대 낙폭(MDD)", R.ddMin != null && isFinite(R.ddMin) ? R.ddMin.toFixed(1) + "%" : "–"],
       ["최고 매매", best ? `${S.inst[best.key].name} ${signed(best.pnl)}` : "–"], ["최악 매매", worst ? `${S.inst[worst.key].name} ${signed(worst.pnl)}` : "–"],
-      ["수수료+세금", won(R.fees + R.taxes)], ["배당 합계", won(R.div)]
+      ["수수료+세금", won(feeTax)], ["배당 합계", won(divSum)]
     ];
+    $("#statsCap").textContent = on ? `선택 기간 기준 (${S.pFrom || "처음"} ~ ${S.pTo || "오늘"})` : "전체 기간 기준";
     $("#stats").innerHTML = s.map(([k, v]) => `<div><div class="k">${k}</div><div class="v">${v}</div></div>`).join("");
   }
 
@@ -656,7 +681,7 @@
   $("#pw").addEventListener("keydown", ev => { if (ev.key === "Enter") submitPw(); });
   ["#fMarket", "#fTicker", "#fSide"].forEach(s => $(s).addEventListener("change", renderT1));
   document.querySelectorAll("select.limit").forEach(s => s.addEventListener("change", () => applyLimit(s.dataset.t)));
-  const periodChanged = () => { if (!S.base) return; renderT1(); renderT2(); renderCharts(S.scenario ? simulate(true) : S.base); };
+  const periodChanged = () => { if (!S.base) return; const R = S.scenario ? simulate(true) : S.base; renderT1(); renderT2(); renderTiles(R); renderCharts(R); };
   $("#pRanges").addEventListener("click", ev => { const b = ev.target.closest("button"); if (!b) return; setPeriod(b.dataset.p); periodChanged(); });
   ["#pFrom", "#pTo"].forEach(s => $(s).addEventListener("change", () => {
     S.pFrom = $("#pFrom").value; S.pTo = $("#pTo").value;

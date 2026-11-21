@@ -475,10 +475,14 @@
         { name: "누적 실현손익", color: "var(--s2)", values: t.realCum },
         { name: "합계", color: "var(--s7)", values: t.unreal.map((v, i) => v + t.realCum[i]) }], fmt: short, tipFmt: signed, marker: mk, height: 260
     });
-    const wSer = wKeys.map(k => ({ name: S.inst[k].name, color: S.inst[k].color, values: t.w[k] }));
-    if (others.length) wSer.push({ name: `기타 보유 ${others.length}종목`, color: "var(--muted)", values: t.dates.map((_, i) => others.reduce((a, k) => a + (t.w[k][i] || 0), 0)) });
+    // 편입 순서: 기간 안에서 비중이 처음 생긴 날 순 (먼저 들어온 종목이 아래)
+    const entry = k => { const i = t.w[k].findIndex(v => v > 0); return i < 0 ? 1e9 : i; };
+    wKeys.sort((a, b) => entry(a) - entry(b) || (t.w[b][entry(b)] || 0) - (t.w[a][entry(a)] || 0));
+    const cmap = {}; wKeys.forEach((k, i) => cmap[k] = COLORS[i % COLORS.length]);   // 이웃한 띠끼리 색이 겹치지 않게
+    const wSer = wKeys.map(k => ({ name: S.inst[k].name, color: cmap[k], values: t.w[k] }));
+    if (others.length) wSer.unshift({ name: `기타 보유 ${others.length}종목`, color: "var(--muted)", values: t.dates.map((_, i) => others.reduce((a, k) => a + (t.w[k][i] || 0), 0)) });
     Charts.line($("#cWeight"), { dates: t.dates, series: wSer, stack100: true, marker: mk });
-    Charts.line($("#cRet"), { dates: t.dates, series: held.map(k => ({ name: S.inst[k].name, color: S.inst[k].color, values: t.r[k] })), fmt: v => Math.round(v) + "%", tipFmt: v => (v > 0 ? "+" : "") + v.toFixed(1) + "%", marker: mk });
+    Charts.line($("#cRet"), { dates: t.dates, series: held.map(k => ({ name: S.inst[k].name, color: cmap[k] || S.inst[k].color, values: t.r[k] })), fmt: v => Math.round(v) + "%", tipFmt: v => (v > 0 ? "+" : "") + v.toFixed(1) + "%", marker: mk });
     // 수익률·낙폭
     let peak = -Infinity; const dd = t.ret.map(v => { if (v == null) return null; const idx = 1 + v / 100; peak = Math.max(peak, idx); return (idx / peak - 1) * 100; });
     R.ddNow = dd[dd.length - 1]; R.ddMin = Math.min(...dd.filter(v => v != null));

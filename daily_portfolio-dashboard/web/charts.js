@@ -131,7 +131,7 @@
       o.series.forEach((s, si) => {
         const v = o.stack100 ? s.values[i] : s.values[i];
         const yy = o.stack100 ? stacked[si].top[i] : v;
-        if (v == null || !isFinite(v)) { dots[si].style.display = "none"; return; }
+        if (v == null || !isFinite(v) || (o.stack100 && v <= 0)) { dots[si].style.display = "none"; return; }
         dots[si].setAttribute("cx", cx); dots[si].setAttribute("cy", y(yy)); dots[si].style.display = "";
         html += `<div><i style="background:${s.color}"></i>${s.name}<span>${o.stack100 ? v.toFixed(1) + "%" : tf(v)}</span></div>`;
       });

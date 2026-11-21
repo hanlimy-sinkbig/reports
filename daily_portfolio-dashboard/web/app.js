@@ -356,6 +356,11 @@
     document.querySelectorAll("#pRanges button").forEach(x => x.classList.toggle("on", x.dataset.p === p));
     syncChartButtons(p);
   }
+  function markPeriod() {   // 기간이 걸려 있으면 날짜 칸과 요약의 기간을 색으로 강조
+    const on = !!(S.pFrom || S.pTo);
+    $("#pFrom").classList.toggle("on", !!S.pFrom); $("#pTo").classList.toggle("on", !!S.pTo);
+    document.querySelector(".card.period").classList.toggle("active", on);
+  }
   function syncChartButtons(p) { document.querySelectorAll("#ranges button").forEach(x => x.classList.toggle("on", x.dataset.r === p)); }
   function applyLimit(id) {
     const sel = document.querySelector(`select.limit[data-t="${id}"]`), n = sel ? +sel.value : 0;
@@ -364,17 +369,61 @@
     const cnt = $(`#cnt-${id}`); if (cnt) cnt.textContent = n && trs.length > n ? `${n} / ${trs.length}행` : `${trs.length}행`;
   }
 
+  /* 기간 필터 아래 요약 문구 */
+  function renderPeriodSummary(R) {
+    const rows = S.rows.filter(r => inPeriod(r.date));
+    const cnt = s => rows.filter(r => r.side === s).length;
+    const krw = r => (r.price || 0) * (r.qty || 0) * (r.cur === "USD" ? (r.fx || fxAt(r.date) || R.fx) : 1);
+    const sum = s => rows.filter(r => r.side === s).reduce((a, r) => a + krw(r), 0);
+    const traded = new Set(rows.filter(r => r.key && ["BUY", "SELL", "TIN"].includes(r.side)).map(r => r.key));
+    const mk = { 국장: new Set(), 미장: new Set() };
+    rows.forEach(r => { if (traded.has(r.key) && mk[r.market]) mk[r.market].add(r.key); });
+    const fee = rows.reduce((a, r) => a + ((r.fee || 0) + (r.tax || 0)) * (r.cur === "USD" ? (r.fx || fxAt(r.date) || R.fx) : 1), 0);
+    const real = R.trades.filter(x => inPeriod(x.date)).reduce((a, x) => a + x.pnl, 0);
+    let pnl = null;
+    if (R.tl && R.tl.dates.length) {
+      const s = sliceRange(R.tl), L = s.dates.length - 1;
+      const v = i => R.hasCash ? s.asset[i] - s.dep[i] : (s.unreal[i] || 0) + (s.realCum[i] || 0);
+      pnl = (S.pFrom || S.pTo) ? v(L) - v(0) : v(L);
+    }
+    const first = rows.length ? rows[0].date : "–", last = rows.length ? rows[rows.length - 1].date : "–";
+    const it = (k, v, c) => `<span>${k}<b class="${c || ""}">${v}</b></span>`;
+    $("#pSum").innerHTML = [
+      it("기간", `${S.pFrom || first} ~ ${S.pTo || last}`, S.pFrom || S.pTo ? "pdate" : ""),
+      it("거래", `${nf(rows.length)}건 (매수 ${cnt("BUY")} · 매도 ${cnt("SELL")} · 배당 ${cnt("DIV")}${cnt("DEP") + cnt("WD") ? ` · 입출금 ${cnt("DEP") + cnt("WD")}` : ""})`),
+      it("거래 종목", `${traded.size}개 (국장 ${mk.국장.size} · 미장 ${mk.미장.size})`),
+      it("매수액", won(sum("BUY"))), it("매도액", won(sum("SELL"))),
+      it("실현손익(매도)", signed(real), cls(real)), it("배당", won(sum("DIV"))),
+      it("수수료+세금", won(fee)),
+      it(S.pFrom || S.pTo ? "기간 손익" : "총 손익", signed(pnl), cls(pnl)),
+      ...(cnt("DEP") + cnt("WD") ? [it("순입금", signed(sum("DEP") - sum("WD")))] : [])
+    ].join("");
+  }
+
   /* ───────── 표 ① ───────── */
+  /* 체크박스 다중 선택: 아무것도 고르지 않으면 '전체' */
+  const msVals = id => new Set([...document.querySelectorAll(`#${id} input[type=checkbox]:checked`)].map(x => x.value));
+  function msSummary(id) {
+    const box = $("#" + id), lab = box.dataset.label, on = [...box.querySelectorAll("input[type=checkbox]:checked")];
+    box.querySelector("summary").textContent = !on.length ? `${lab}: 전체` : on.length <= 2 ? `${lab}: ${on.map(x => x.parentElement.textContent.trim()).join(", ")}` : `${lab}: ${on.length}개 선택`;
+    box.classList.toggle("on", on.length > 0);
+  }
+  function msFill(id, vals, search) {
+    const box = $("#" + id), keep = msVals(id), pop = box.querySelector(".ms-pop");
+    pop.innerHTML = `<div class="ms-act"><button type="button" data-a="all">모두 선택</button><button type="button" data-a="none">선택 해제(전체)</button></div>` +
+      (search ? `<input type="search" placeholder="종목 검색">` : "") +
+      vals.map(([v, l]) => `<label><input type="checkbox" value="${esc(v)}"${keep.has(v) ? " checked" : ""}>${esc(l)}</label>`).join("");
+    msSummary(id);
+  }
   function fillFilters() {
-    const opt = (sel, vals, lab) => { const cur = sel.value; sel.innerHTML = `<option value="">${lab}</option>` + vals.map(v => `<option value="${esc(v[0])}">${esc(v[1])}</option>`).join(""); sel.value = cur; };
-    opt($("#fMarket"), [...new Set(S.raw.map(r => r.market).filter(Boolean))].map(v => [v, v]), "전체 구분");
-    opt($("#fTicker"), S.keys.map(k => [k, S.inst[k].name]), "전체 종목");
-    opt($("#fSide"), [...new Set(S.rows.map(r => r.side))].map(v => [v, SIDE_KO[v]]), "전체 매매");
+    msFill("fMarket", [...new Set(S.raw.map(r => r.market).filter(Boolean))].map(v => [v, v]));
+    msFill("fTicker", S.keys.map(k => [k, S.inst[k].name]).sort((a, b) => a[1].localeCompare(b[1], "ko")), true);
+    msFill("fSide", [...new Set(S.rows.map(r => r.side))].map(v => [v, SIDE_KO[v] || v]));
   }
   function renderT1() {
-    const fm = $("#fMarket").value, ft = $("#fTicker").value, fs = $("#fSide").value;
+    const fm = msVals("fMarket"), ft = msVals("fTicker"), fs = msVals("fSide");
     const head = ["날짜", "구분", "종목", "티커", "매매", "단가", "수량", "통화", "환율", "거래금액(원)", "수수료", "세금", "목표가", "손절가", "매매사유", "메모", "계좌"];
-    const rows = S.raw.filter(r => inPeriod(r.date) && (!fm || r.market === fm) && (!ft || r.key === ft) && (!fs || r.side === fs))
+    const rows = S.raw.filter(r => inPeriod(r.date) && (!fm.size || fm.has(r.market)) && (!ft.size || ft.has(r.key)) && (!fs.size || fs.has(r.side)))
       .map((r, i) => [r, i]).sort((a, b) => (b[0].date || "").localeCompare(a[0].date || "") || b[1] - a[1]).map(x => x[0]);   // 최신 거래가 위로
     $("#t1").innerHTML = `<thead><tr>${head.map((h, i) => `<th class="${i < 5 || i > 13 ? "l" : ""}">${h}</th>`).join("")}</tr></thead><tbody>` +
       rows.map(r => {
@@ -630,7 +679,7 @@
   /* ───────── 전체 그리기 ───────── */
   function renderAll() {
     const R = S.scenario ? simulate(true) : S.base;
-    renderTiles(R); renderCharts(R); renderAdvice(R);
+    renderTiles(R); renderCharts(R); renderAdvice(R); renderPeriodSummary(R);
     $("#scnBadge").hidden = !S.scenario;
   }
   async function start(text, fromStorage) {
@@ -709,9 +758,23 @@
   $("#btnPw").addEventListener("click", submitPw);
   $("#pwOk").addEventListener("click", () => showPw(true));
   $("#pw").addEventListener("keydown", ev => { if (ev.key === "Enter") submitPw(); });
-  ["#fMarket", "#fTicker", "#fSide"].forEach(s => $(s).addEventListener("change", renderT1));
+  ["fMarket", "fTicker", "fSide"].forEach(id => {
+    const box = $("#" + id);
+    box.addEventListener("change", ev => { if (ev.target.type === "checkbox") { msSummary(id); renderT1(); } });
+    box.addEventListener("click", ev => {
+      const a = ev.target.dataset && ev.target.dataset.a; if (!a) return;
+      box.querySelectorAll("label").forEach(l => { if (l.style.display !== "none") l.querySelector("input").checked = a === "all"; });
+      msSummary(id); renderT1();
+    });
+    box.addEventListener("input", ev => {
+      if (ev.target.type !== "search") return;
+      const q = ev.target.value.trim().toLowerCase();
+      box.querySelectorAll("label").forEach(l => { l.style.display = !q || l.textContent.toLowerCase().includes(q) || l.querySelector("input").value.toLowerCase().includes(q) ? "" : "none"; });
+    });
+  });
+  document.addEventListener("click", ev => document.querySelectorAll("details.ms[open]").forEach(d => { if (!d.contains(ev.target)) d.open = false; }));
   document.querySelectorAll("select.limit").forEach(s => s.addEventListener("change", () => applyLimit(s.dataset.t)));
-  const periodChanged = () => { if (!S.base) return; const R = S.scenario ? simulate(true) : S.base; renderT1(); renderT2(); renderTiles(R); renderCharts(R); };
+  const periodChanged = () => { if (!S.base) return; const R = S.scenario ? simulate(true) : S.base; markPeriod(); renderT1(); renderT2(); renderTiles(R); renderCharts(R); renderPeriodSummary(R); };
   $("#pRanges").addEventListener("click", ev => { const b = ev.target.closest("button"); if (!b) return; setPeriod(b.dataset.p); periodChanged(); });
   ["#pFrom", "#pTo"].forEach(s => $(s).addEventListener("change", () => {
     S.pFrom = $("#pFrom").value; S.pTo = $("#pTo").value;

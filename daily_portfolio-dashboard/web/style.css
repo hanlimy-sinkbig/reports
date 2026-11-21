@@ -112,3 +112,23 @@ code { font-size: 12px; background: var(--grid); padding: 1px 5px; border-radius
 .pwbox input { font: inherit; border: 1px solid var(--line); border-radius: 7px; padding: 6px 8px; background: var(--surface); color: var(--text); width: 160px; }
 .pwbox[hidden], .pwok[hidden] { display: none; }   /* display 지정이 hidden 속성을 덮어쓰지 않게 */
 .pwok { font-size: 13px; color: var(--text2); border: 1px solid var(--line); border-radius: 99px; padding: 5px 12px; cursor: pointer; white-space: nowrap; }
+
+/* 체크박스 다중 선택 필터 */
+.ms { position: relative; }
+.ms > summary { list-style: none; cursor: pointer; border: 1px solid var(--line); border-radius: 7px; padding: 6px 26px 6px 10px; background: var(--surface); color: var(--text); white-space: nowrap; max-width: 220px; overflow: hidden; text-overflow: ellipsis; position: relative; }
+.ms > summary::-webkit-details-marker { display: none; }
+.ms > summary::after { content: "▾"; position: absolute; right: 9px; color: var(--text2); }
+.ms.on > summary { border-color: var(--text); font-weight: 600; }
+.ms-pop { position: absolute; z-index: 20; top: calc(100% + 4px); left: 0; min-width: 200px; max-height: 320px; overflow-y: auto; background: var(--surface); border: 1px solid var(--line); border-radius: 9px; box-shadow: 0 6px 20px rgba(0,0,0,.12); padding: 8px; }
+.ms-pop .ms-act { display: flex; gap: 6px; margin-bottom: 6px; }
+.ms-pop .ms-act button { font: inherit; font-size: 12px; border: 1px solid var(--line); background: var(--surface); color: var(--text2); border-radius: 6px; padding: 3px 8px; cursor: pointer; }
+.ms-pop input[type=search] { width: 100%; box-sizing: border-box; font: inherit; border: 1px solid var(--line); border-radius: 6px; padding: 5px 8px; margin-bottom: 6px; background: var(--surface); color: var(--text); }
+.ms-pop label { display: flex; align-items: center; gap: 6px; padding: 4px 2px; white-space: nowrap; cursor: pointer; }
+
+/* 기간 요약 */
+.psum { display: flex; flex-wrap: wrap; gap: 6px 18px; margin: 6px 0 4px; font-size: 13px; color: var(--text2); }
+.psum b { color: var(--text); font-weight: 600; margin-left: 4px; }
+.psum .up { color: var(--up); } .psum .down { color: var(--down); }
+.period input[type=date].on { border-color: var(--s1); box-shadow: 0 0 0 2px color-mix(in srgb, var(--s1) 25%, transparent); color: var(--s1); font-weight: 700; }
+.card.period.active { border-color: color-mix(in srgb, var(--s1) 55%, var(--line)); }
+.psum b.pdate { color: var(--s1); }

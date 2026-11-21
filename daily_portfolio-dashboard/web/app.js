@@ -466,12 +466,15 @@
     let R = S.base;
     if (S.pFrom || S.pTo) {
       const keys = new Set(S.rows.filter(r => r.key && inPeriod(r.date)).map(r => r.key));
-      R = Object.assign({}, R, { rows: R.rows.filter(r => keys.has(r.key)) });
+      R = Object.assign({}, R, { rows: R.rows.filter(r => r.qty > 0 || keys.has(r.key)) });   // 현재 보유 종목은 항상 표시
     }
+    // 정렬: 현재 보유 종목(평가금액 큰 순) → 정리한 종목(최근 거래 순)
+    const lastD = {}; S.rows.forEach(r => { if (r.key) lastD[r.key] = r.date; });
+    R = Object.assign({}, R, { rows: [...R.rows].sort((a, b) => (b.qty > 0) - (a.qty > 0) || (a.qty > 0 ? b.valueK - a.valueK : (lastD[b.key] || "").localeCompare(lastD[a.key] || ""))) });
     const head = `<thead><tr>${COLS.map(([h, k]) => `<th class="${k}">${h}</th>`).join("")}</tr></thead>`;
     $("#t2").innerHTML = head + "<tbody>" + R.rows.map(r => `<tr class="${r.qty > 0 ? "" : "closed"}">${cells(r, false)}</tr>`).join("") + totalRow(R) + "</tbody>";
     const asof = S.prices && S.prices.generated ? `시세 기준: ${S.prices.generated}` : "시세 파일 없음 → 현재가 대신 최근 체결가로 계산";
-    $("#t2hint").textContent = `${asof} · 거래량 괄호는 20일 평균 대비${S.pFrom || S.pTo ? " · 기간 내 거래 종목만 (수량·손익은 전체 기간 기준)" : ""}`;
+    $("#t2hint").textContent = `${asof} · 거래량 괄호는 20일 평균 대비${S.pFrom || S.pTo ? " · 현재 보유 + 기간 내 거래 종목 (수량·손익은 전체 기간 기준)" : ""}`;
     applyLimit("t2");
   }
   function editRows() {   // 표③ 현재 입력값으로 행 다시 계산
@@ -483,6 +486,7 @@
       return Object.assign({}, b, { qty: e.qty, avg: e.avg, price: e.price, valueK, costK, pnlK: valueK - costK, ret: costK > 0 ? valueK / costK - 1 : null, chg: b.chg != null && b.price ? (e.price / (b.price / (1 + b.chg))) - 1 : null });
     });
     const tv = rows.reduce((a, r) => a + r.valueK, 0); rows.forEach(r => r.weight = tv > 0 ? r.valueK / tv : 0);
+    rows.sort((a, b) => b.valueK - a.valueK);   // 평가금액 큰 순
     return { rows, fx, hasCash: S.base.hasCash, cash: S.base.cash };
   }
   function renderT3() {

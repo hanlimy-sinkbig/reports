@@ -623,6 +623,112 @@
     $("#stats").innerHTML = s.map(([k, v]) => `<div><div class="k">${k}</div><div class="v">${v}</div></div>`).join("");
   }
 
+  /* ───────── 경고 지표 ─────────
+     보유 구성(업종·종목 쏠림, 단기 몰아 사기, 고점 매수, 손절가, 손실 방치, 낙폭)과
+     매매 습관(빈도, 비용 잠식, 매매사유)을 신호등으로 보여 줌. 매매 습관은 기간 필터(없으면 최근 12개월) 기준 */
+  const AUTO_REASON = /자동입력|타사대체입고/;
+  const hasReason = r => !!r.reason && !AUTO_REASON.test(r.reason);
+  const addDays = (d, n) => new Date(new Date(d + "T00:00:00Z").getTime() + n * 864e5).toISOString().slice(0, 10);
+
+  /* 현재 보유분이 생긴 뒤(마지막으로 수량 0이 된 이후)의 매수 묶음 */
+  function holdingLots(k) {
+    let q = 0, lots = [];
+    for (const r of S.rows) {
+      if (r.key !== k) continue;
+      if (r.side === "BUY" || r.side === "TIN") {
+        if (q <= 1e-9) lots = [];
+        const f = r.cur === "USD" ? (r.fx || fxAt(r.date)) : 1;
+        lots.push({ key: k, date: r.date, price: r.aprice, amtK: r.aprice * r.aqty * f });
+        q += r.aqty;
+      } else if (r.side === "SELL") q -= Math.min(r.aqty, q);
+    }
+    return q > 1e-9 ? lots : [];
+  }
+  /* 그날까지 1년 최고 종가 (시세 파일이 없으면 null) */
+  function high1y(k, d) {
+    const h = histOf(k); if (!h) return null;
+    const i = lastLE(h.dates, d); if (i < 0) return null;
+    const j = lastLE(h.dates, addDays(d, -365)) + 1;
+    let m = -Infinity; for (let x = Math.max(j, 0); x <= i; x++) if (h.close[x] > m) m = h.close[x];
+    return isFinite(m) ? m : null;
+  }
+
+  function renderAlerts(R) {
+    const out = [], lv = (v, y, r, hi) => v == null || !isFinite(v) ? "n" : hi ? (v >= r ? "r" : v >= y ? "y" : "g") : (v <= r ? "r" : v <= y ? "y" : "g");
+    const add = (st, k, v, d, t) => out.push({ st, k, v, d, t });
+    const live = R.rows.filter(r => r.qty > 0 && r.valueK > 0).sort((a, b) => b.weight - a.weight);
+
+    // 1) 업종 집중
+    if (live.length) {
+      const sec = {}; live.forEach(r => { const s = sec[r.sector] || (sec[r.sector] = { w: 0, n: 0 }); s.w += r.weight; s.n++; });
+      const [sn, s] = Object.entries(sec).sort((a, b) => b[1].w - a[1].w)[0];
+      add(lv(s.w, 0.4, 0.7, true), "업종 집중", `${(s.w * 100).toFixed(0)}%`, `${sn} ${s.n}종목${live.length > s.n ? ` / 전체 ${live.length}종목` : ""}`, "가장 큰 업종 비중 · 40% 미만 양호 · 70% 이상 위험");
+      const top = live[0];
+      add(lv(top.weight, 0.3, 0.4, true) , "최대 종목 비중", `${(top.weight * 100).toFixed(0)}%`, top.name, "보유 주식 평가액 기준 · 30% 이하 양호 · 40% 초과 위험");
+    } else {
+      add("n", "업종 집중", "–", "보유 종목 없음", "가장 큰 업종 비중"); add("n", "최대 종목 비중", "–", "보유 종목 없음", "");
+    }
+
+    // 2) 단기 몰아 사기 · 고점 근처 매수 (현재 보유분의 매수 묶음 기준)
+    const lots = live.flatMap(r => holdingLots(r.key)).sort((a, b) => a.date < b.date ? -1 : 1);
+    const lotSum = lots.reduce((a, x) => a + x.amtK, 0);
+    if (lots.length && lotSum > 0) {
+      let best = 0, bi = 0;
+      lots.forEach((x, i) => { const end = addDays(x.date, 30); const s = lots.filter(y => y.date >= x.date && y.date <= end).reduce((a, y) => a + y.amtK, 0); if (s > best) { best = s; bi = i; } });
+      const share = best / lotSum, end = lots.filter(y => y.date <= addDays(lots[bi].date, 30)).slice(-1)[0].date;
+      add(lv(share, 0.5, 0.7, true), "30일 안 몰아 산 비중", `${(share * 100).toFixed(0)}%`, `${lots[bi].date.slice(2).replace(/-/g, ".")} ~ ${end.slice(5).replace("-", ".")} 매수가 보유 원가의 ${(share * 100).toFixed(0)}%`, "보유 원가 중 가장 몰린 30일 · 50% 미만 양호 · 70% 이상 위험");
+      const known = lots.map(x => ({ x, h: high1y(x.key, x.date) })).filter(o => o.h);
+      const kSum = known.reduce((a, o) => a + o.x.amtK, 0);
+      if (kSum > 0) {
+        const near = known.filter(o => o.x.price >= o.h * 0.9), nSum = near.reduce((a, o) => a + o.x.amtK, 0), sh = nSum / kSum;
+        const names = [...new Set(near.map(o => S.inst[o.x.key].name))];
+        add(lv(sh, 0.3, 0.6, true), "고점 근처 매수 비중", `${(sh * 100).toFixed(0)}%`, names.length ? `1년 고점의 90% 이상에서 산 종목: ${names.join(", ")}` : "고점 근처에서 산 보유분 없음", "산 날 기준 1년 최고 종가의 90% 이상에서 산 원가 비중 · 30% 미만 양호 · 60% 이상 위험");
+      } else add("n", "고점 근처 매수 비중", "–", "보유 종목의 과거 시세가 없어 계산 못 함", "산 날 기준 1년 최고 종가의 90% 이상에서 산 원가 비중");
+    } else {
+      add("n", "30일 안 몰아 산 비중", "–", "보유 종목 없음", ""); add("n", "고점 근처 매수 비중", "–", "보유 종목 없음", "");
+    }
+
+    // 3) 손절가 입력률 · 손실 방치
+    if (live.length) {
+      const withStop = live.filter(r => r.stop != null).length, cov = withStop / live.length;
+      add(lv(cov, 0.99, 0.49), "손절가 입력률", `${withStop} / ${live.length}종목`, cov === 1 ? "모든 보유 종목에 손절가가 있습니다" : `손절가 없음: ${live.filter(r => r.stop == null).map(r => r.name).join(", ")}`, "보유 종목 중 손절가 칸을 채운 비율 · 전부 양호 · 절반 미만 위험");
+      const worst = live.reduce((a, r) => r.ret != null && (a == null || r.ret < a.ret) ? r : a, null);
+      const deep = live.filter(r => r.ret != null && r.ret <= -0.2), noStop = deep.filter(r => r.stop == null || r.price <= r.stop);
+      add(lv(worst && worst.ret, -0.15, -0.3), "손실 방치", worst ? pct(worst.ret) : "–", deep.length ? `−20% 넘는 종목 ${deep.length}개${noStop.length ? ` · 그중 ${noStop.length}개는 손절가 없음/이탈` : ""}` : `가장 나쁜 종목: ${worst ? worst.name : "–"}`, "가장 나쁜 보유 종목 수익률 · −15% 위 양호 · −30% 이하 위험");
+    } else { add("n", "손절가 입력률", "–", "보유 종목 없음", ""); add("n", "손실 방치", "–", "보유 종목 없음", ""); }
+
+    // 4) 포트폴리오 낙폭 (전체 기간)
+    let peak = -Infinity, ddNow = null, ddMin = 0;
+    R.tl.ret.forEach(v => { if (v == null) return; const idx = 1 + v / 100; peak = Math.max(peak, idx); ddNow = peak > 0 ? idx / peak - 1 : null; if (ddNow != null) ddMin = Math.min(ddMin, ddNow); });
+    add(lv(ddNow, -0.1, -0.2), "고점 대비 낙폭", ddNow == null ? "–" : pct(ddNow), `역대 최대 낙폭 ${pct(ddMin)}`, "누적 수익률 고점 대비 지금 · −10% 위 양호 · −20% 이하 위험");
+
+    // 5) 매매 습관 (기간 필터 또는 최근 12개월)
+    const T = today(), from = S.pFrom || (S.pTo ? (S.rows[0] || {}).date || T : addDays(T, -365)), to = S.pTo || T;
+    const win = d => d >= from && d <= to;
+    const months = Math.max(1, (new Date(to) - new Date(from)) / 864e5 / 30.44);
+    const tr = S.rows.filter(r => (r.side === "BUY" || r.side === "SELL") && win(r.date));
+    const perM = tr.length / months, byM = {}, day = {};
+    tr.forEach(r => { byM[month(r.date)] = (byM[month(r.date)] || 0) + 1; const k = r.date + "|" + r.key; (day[k] || (day[k] = new Set())).add(r.side); });
+    const rt = Object.values(day).filter(s => s.size === 2).length;
+    const [bm, bn] = Object.entries(byM).sort((a, b) => b[1] - a[1])[0] || [];
+    add(tr.length ? lv(perM, 8, 20, true) : "g", "매매 빈도", `월 ${perM.toFixed(1)}건`, tr.length ? `${tr.length}건 · 당일 사고팔기 ${rt}회 · 최다 ${mLabel(bm)}월 ${bn}건` : "이 기간 매매 없음", "매수+매도 건수 ÷ 개월 · 월 8건 이하 양호 · 20건 초과 위험");
+    const fxOf = r => r.cur === "USD" ? (r.fx || fxAt(r.date)) : 1;
+    const cost = tr.reduce((a, r) => a + ((r.fee || 0) + (r.tax || 0)) * fxOf(r), 0);
+    const real = R.trades.filter(x => win(x.date)).reduce((a, x) => a + x.pnl, 0), gross = real + cost;
+    if (!tr.length) add("n", "거래비용 잠식률", "–", "이 기간 매매 없음", "");
+    else if (gross <= 0) add("r", "거래비용 잠식률", "이익 없음", `비용 ${short(cost)}원 · 매도 손익 ${signed(real)}`, "수수료+세금 ÷ 비용 빼기 전 매도 이익 · 15% 미만 양호 · 35% 이상 위험");
+    else add(lv(cost / gross, 0.15, 0.35, true), "거래비용 잠식률", `${(cost / gross * 100).toFixed(0)}%`, `비용 ${short(cost)}원 / 비용 전 이익 ${short(gross)}원`, "수수료+세금 ÷ 비용 빼기 전 매도 이익 · 15% 미만 양호 · 35% 이상 위험");
+    const withR = tr.filter(hasReason).length;
+    add(tr.length ? lv(withR / tr.length, 0.799, 0.299) : "n", "매매사유 기록률", tr.length ? `${(withR / tr.length * 100).toFixed(0)}%` : "–", tr.length ? `${tr.length}건 중 ${withR}건 기록 ('키움 자동입력'은 빈칸으로 봄)` : "이 기간 매매 없음", "매수·매도 중 사유를 적은 비율 · 80% 이상 양호 · 30% 미만 위험");
+
+    const c = { r: 0, y: 0, g: 0 }; out.forEach(o => { if (c[o.st] != null) c[o.st]++; });
+    $("#alertSum").innerHTML = `<b class="r">위험 ${c.r}</b><b class="y">주의 ${c.y}</b><b class="g">양호 ${c.g}</b>`;
+    $("#alertCap").textContent = `매매 습관 기준: ${from} ~ ${to}${S.pFrom || S.pTo ? " (기간 필터)" : " (최근 12개월)"}${S.scenario ? " · 보유 지표는 시나리오 값" : ""}`;
+    const order = { r: 0, y: 1, n: 2, g: 3 };
+    $("#alerts").innerHTML = out.map((o, i) => [o, i]).sort((a, b) => order[a[0].st] - order[b[0].st] || a[1] - b[1]).map(([o]) =>
+      `<div class="al ${o.st}"><div class="k"><i></i>${esc(o.k)}</div><div class="v">${esc(o.v)}</div><div class="d">${esc(o.d)}</div>${o.t ? `<div class="t">${esc(o.t)}</div>` : ""}</div>`).join("");
+  }
+
   /* ───────── 조언 ───────── */
   function renderAdvice(R) {
     const A = [], add = (c, t, b) => A.push(`<li class="${c}"><b>${t}</b>${b}</li>`);
@@ -680,7 +786,7 @@
       const pend = S.prices && S.prices.meta && S.prices.meta.pending > 0;
       add("todo", "시세를 찾지 못한 종목", `${noPx.map(k => `${esc(S.inst[k].name)}(${esc(k)})`).join(", ")} → 매매일지의 티커 표기를 확인하세요. 국내는 6자리 종목코드(005930), 미국은 야후 티커(AAPL, BRK-B)입니다.${pend ? ` 지금은 전체 시세를 처음 채우는 중이라(남은 종목 ${nf(S.prices.meta.pending)}개) 다음 실행 후 나타날 수도 있습니다.` : " 상장폐지·장외 종목은 수집 대상이 아닙니다."}`);
     }
-    const noReason = S.rows.filter(r => (r.side === "BUY" || r.side === "SELL") && !r.reason).length;
+    const noReason = S.rows.filter(r => (r.side === "BUY" || r.side === "SELL") && !hasReason(r)).length;
     if (noReason) add("todo", `매매사유 빈칸 ${noReason}건`, "매수·매도 이유를 한 줄이라도 남겨 두면 손절·목표가 판단과 복기에 큰 도움이 됩니다.");
     $("#advice").innerHTML = A.join("") || '<li class="info"><b>특이사항 없음</b>현재 규칙에 걸리는 항목이 없습니다.</li>';
   }
@@ -688,7 +794,7 @@
   /* ───────── 전체 그리기 ───────── */
   function renderAll() {
     const R = S.scenario ? simulate(true) : S.base;
-    renderTiles(R); renderCharts(R); renderAdvice(R); renderPeriodSummary(R);
+    renderTiles(R); renderCharts(R); renderAlerts(R); renderAdvice(R); renderPeriodSummary(R);
     $("#scnBadge").hidden = !S.scenario;
   }
   async function start(text, fromStorage) {
@@ -783,7 +889,7 @@
   });
   document.addEventListener("click", ev => document.querySelectorAll("details.ms[open]").forEach(d => { if (!d.contains(ev.target)) d.open = false; }));
   document.querySelectorAll("select.limit").forEach(s => s.addEventListener("change", () => applyLimit(s.dataset.t)));
-  const periodChanged = () => { if (!S.base) return; const R = S.scenario ? simulate(true) : S.base; markPeriod(); renderT1(); renderT2(); renderTiles(R); renderCharts(R); renderPeriodSummary(R); };
+  const periodChanged = () => { if (!S.base) return; const R = S.scenario ? simulate(true) : S.base; markPeriod(); renderT1(); renderT2(); renderTiles(R); renderCharts(R); renderAlerts(R); renderPeriodSummary(R); };
   $("#pRanges").addEventListener("click", ev => { const b = ev.target.closest("button"); if (!b) return; setPeriod(b.dataset.p); periodChanged(); });
   ["#pFrom", "#pTo"].forEach(s => $(s).addEventListener("change", () => {
     S.pFrom = $("#pFrom").value; S.pTo = $("#pTo").value;

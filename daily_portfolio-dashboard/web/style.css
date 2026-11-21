@@ -91,6 +91,23 @@ td.edit.changed { background: var(--edit-on); }
 .stats div { border: 1px solid var(--grid); border-radius: 8px; padding: 8px 10px; }
 .stats .k { font-size: 12px; color: var(--text2); }
 .stats .v { font-size: 17px; font-weight: 700; font-variant-numeric: tabular-nums; }
+/* 경고 지표 */
+.alerts { --al-r: #d03b3b; --al-y: #d99a00; --al-g: #1baf7a; --al-n: var(--muted); }
+.alerts-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(205px, 1fr)); gap: 10px; }
+.al { border: 1px solid var(--line); border-left: 5px solid var(--al-n); border-radius: 10px; padding: 9px 12px 10px; min-width: 0; }
+.al.r { border-left-color: var(--al-r); background: color-mix(in srgb, var(--al-r) 7%, var(--surface)); }
+.al.y { border-left-color: var(--al-y); background: color-mix(in srgb, var(--al-y) 8%, var(--surface)); }
+.al.g { border-left-color: var(--al-g); }
+.al .k { color: var(--text2); font-size: 12.5px; display: flex; align-items: center; gap: 6px; }
+.al .k i { width: 9px; height: 9px; border-radius: 99px; background: var(--al-n); flex: none; }
+.al.r .k i { background: var(--al-r); } .al.y .k i { background: var(--al-y); } .al.g .k i { background: var(--al-g); }
+.al .v { font-size: 20px; font-weight: 700; font-variant-numeric: tabular-nums; margin-top: 1px; }
+.al.r .v { color: var(--al-r); }
+.al .d { font-size: 12.5px; color: var(--text); font-variant-numeric: tabular-nums; }
+.al .t { font-size: 11.5px; color: var(--muted); margin-top: 3px; }
+@media (max-width: 560px) { .alerts-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; } .al { padding: 8px 9px; } .al .v { font-size: 17px; } .al .d { font-size: 12px; } }
+#alertSum b { font-weight: 700; margin-left: 6px; }
+#alertSum .r { color: var(--al-r); } #alertSum .y { color: var(--al-y); } #alertSum .g { color: var(--al-g); }
 .advice ul { margin: 8px 0; padding-left: 0; list-style: none; }
 .advice li { padding: 9px 0 9px 30px; border-bottom: 1px solid var(--grid); position: relative; }
 .advice li::before { position: absolute; left: 2px; top: 8px; font-size: 15px; }

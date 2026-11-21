@@ -16,10 +16,11 @@
   <div class="loader">
     <label class="btn primary">매매일지 CSV 열기<input type="file" id="file" accept=".csv,text/csv" hidden></label>
     <button class="btn" id="btnSample">샘플로 보기</button>
+    <span class="pwbox" id="pwBox" hidden><input type="password" id="pw" placeholder="대시보드 비밀번호" autocomplete="current-password"><button class="btn primary" id="btnPw">열기</button></span>
     <button class="btn ghost" id="btnForget" hidden>이 기기에서 지우기</button>
   </div>
 </header>
-<p class="privacy">🔒 선택한 CSV는 이 브라우저 안에서만 읽히고 서버로 전송되지 않습니다. 아이패드는 <b>파일 앱 → Google Drive → 한림투자</b>에서, 맥은 Google Drive 데스크톱 폴더에서 고르세요.</p>
+<p class="privacy">🔒 매매일지는 맥에서 암호화되어 올라오고, 이 브라우저 안에서 비밀번호로 풀어 자동으로 불러옵니다(비밀번호는 이 기기에만 기억). 직접 고른 CSV도 서버로 전송되지 않습니다. 아이패드는 <b>파일 앱 → Google Drive → 한림투자</b>에서, 맥은 Google Drive 데스크톱 폴더에서 고르세요.</p>
 <div id="warn" class="warn" hidden></div>
 
 <main id="app" hidden>

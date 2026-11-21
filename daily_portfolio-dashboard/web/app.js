@@ -13,6 +13,12 @@
     if (h.endsWith("github.io")) return `https://raw.githubusercontent.com/${h.split(".")[0]}/${location.pathname.split("/")[1]}/market-data/data/`;
     return "data/";   // 로컬 테스트용
   })();
+  const ENC_URL = (() => {
+    const h = location.hostname;
+    if (h.endsWith("github.io")) return `https://raw.githubusercontent.com/${h.split(".")[0]}/${location.pathname.split("/")[1]}/journal/journal.enc.json`;
+    return "journal.enc.json";
+  })();
+  const PW_KEY = "pf_pw_v1";
   const S = { raw: [], rows: [], inst: {}, keys: [], prices: null, base: null, edits: {}, fxEdit: null, scenario: false, range: "ALL", warnings: [], pFrom: "", pTo: "" };
 
   /* ───────── 형식 ───────── */
@@ -592,6 +598,45 @@
   const safeGet = () => { try { return localStorage.getItem(LS_KEY); } catch (e) { return null; } };
   const safeSet = v => { try { v == null ? localStorage.removeItem(LS_KEY) : localStorage.setItem(LS_KEY, v); } catch (e) { } };
 
+  /* ───────── 암호화 매매일지 자동 불러오기 ───────── */
+  const b64d = s => Uint8Array.from(atob(s), c => c.charCodeAt(0));
+  const pwGet = () => { try { return localStorage.getItem(PW_KEY); } catch (e) { return null; } };
+  const pwSet = v => { try { v == null ? localStorage.removeItem(PW_KEY) : localStorage.setItem(PW_KEY, v); } catch (e) { } };
+  async function decryptJournal(j, pw) {
+    const cs = crypto.subtle, te = new TextEncoder();
+    const base = await cs.importKey("raw", te.encode(pw), "PBKDF2", false, ["deriveBits"]);
+    const bits = new Uint8Array(await cs.deriveBits({ name: "PBKDF2", salt: b64d(j.salt), iterations: j.iter, hash: "SHA-256" }, base, 512));
+    const ek = await cs.importKey("raw", bits.slice(0, 32), { name: "HMAC", hash: "SHA-256" }, false, ["sign"]);
+    const mk = await cs.importKey("raw", bits.slice(32), { name: "HMAC", hash: "SHA-256" }, false, ["verify"]);
+    const nonce = b64d(j.nonce), ct = b64d(j.ct), tag = b64d(j.tag);
+    const md = new Uint8Array(nonce.length + ct.length); md.set(nonce); md.set(ct, nonce.length);
+    if (!await cs.verify("HMAC", mk, tag, md)) throw new Error("비밀번호가 맞지 않습니다");
+    const n = Math.ceil(ct.length / 32), ps = [];
+    for (let i = 0; i < n; i++) { const m = new Uint8Array(nonce.length + 4); m.set(nonce); new DataView(m.buffer).setUint32(nonce.length, i); ps.push(cs.sign("HMAC", ek, m)); }
+    const ks = await Promise.all(ps), pt = new Uint8Array(ct.length);
+    for (let i = 0; i < n; i++) { const k = new Uint8Array(ks[i]); for (let b = 0; b < 32 && i * 32 + b < ct.length; b++) pt[i * 32 + b] = ct[i * 32 + b] ^ k[b]; }
+    if (!j.gz) return pt.buffer;
+    return await new Response(new Blob([pt]).stream().pipeThrough(new DecompressionStream("gzip"))).arrayBuffer();
+  }
+  function showPw(on, msg) { $("#pwBox").hidden = !on; if (msg) showWarn([msg]); if (on) $("#pw").focus(); }
+  async function openEncrypted(pw) {
+    const text = decode(await decryptJournal(S.enc, pw));
+    pwSet(pw); safeSet(text); showPw(false); showWarn([]);
+    await start(text, true);
+    $("#asof").textContent = `자동 불러옴 (맥 동기화 ${S.enc.updated || "?"}) · ` + $("#asof").textContent;
+  }
+  async function tryAuto() {
+    try {
+      const r = await fetch(ENC_URL + "?t=" + Date.now(), { cache: "no-store" });
+      if (!r.ok) return false;
+      S.enc = await r.json();
+    } catch (e) { return false; }
+    const pw = pwGet();
+    if (!pw) { showPw(true); return false; }
+    try { await openEncrypted(pw); return true; }
+    catch (e) { pwSet(null); showPw(true, "저장된 비밀번호로 열지 못했습니다. 다시 입력하세요."); return false; }
+  }
+
   /* ───────── 이벤트 ───────── */
   $("#file").addEventListener("change", async ev => {
     const f = ev.target.files[0]; if (!f) return;
@@ -601,7 +646,13 @@
     const r = await fetch("sample.csv", { cache: "no-store" }); await start(decode(await r.arrayBuffer()), false);
     $("#asof").textContent = "샘플 데이터 · " + $("#asof").textContent;
   });
-  $("#btnForget").addEventListener("click", () => { safeSet(null); location.reload(); });
+  $("#btnForget").addEventListener("click", () => { safeSet(null); pwSet(null); location.reload(); });
+  const submitPw = async () => {
+    const pw = $("#pw").value; if (!pw || !S.enc) return;
+    try { await openEncrypted(pw); $("#pw").value = ""; } catch (e) { showWarn([e.message]); $("#pw").select(); }
+  };
+  $("#btnPw").addEventListener("click", submitPw);
+  $("#pw").addEventListener("keydown", ev => { if (ev.key === "Enter") submitPw(); });
   ["#fMarket", "#fTicker", "#fSide"].forEach(s => $(s).addEventListener("change", renderT1));
   document.querySelectorAll("select.limit").forEach(s => s.addEventListener("change", () => applyLimit(s.dataset.t)));
   const periodChanged = () => { if (!S.base) return; renderT1(); renderT2(); };
@@ -634,6 +685,8 @@
   (async function init() {
     const m = await getJSON("_meta");
     $("#foot").textContent = m ? `시세 갱신: ${m.generated} · 수집 종목 ${nf(m.total)}개 (코스피·코스닥·국내 ETF·미국 상장 주식/ETF, 평일 2회)${m.pending ? ` · 처음 채우는 중, 남은 ${nf(m.pending)}개` : ""}${m.missed ? ` · ⚠ 이번 갱신에서 ${nf(m.missed)}개 종목은 받지 못해 지난 종가 유지` : ""}` : "시세 파일이 아직 없습니다. Actions 실행 후 생깁니다.";
-    const saved = safeGet(); if (saved) start(saved, true);
+    const saved = safeGet();
+    if (saved) await start(saved, true);          // 이전 내용 먼저 보여 주고
+    await tryAuto();                               // 최신 암호화 매매일지로 교체
   })();
 })();

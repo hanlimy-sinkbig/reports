@@ -409,12 +409,23 @@
     document.querySelector(".card.period").classList.toggle("active", on);
   }
   function syncChartButtons(p) { document.querySelectorAll("#ranges button").forEach(x => x.classList.toggle("on", x.dataset.r === p)); }
+  /* 표 높이: 고른 행 수(10·20·50)만큼만 보이고, 표 안에서 스크롤하면 나머지 행도 모두 볼 수 있음. '전체'는 높이 제한 없음 */
   function applyLimit(id) {
     const sel = document.querySelector(`select.limit[data-t="${id}"]`), n = sel ? +sel.value : 0;
-    const trs = [...document.querySelectorAll(`#${id} tbody tr`)].filter(tr => !tr.classList.contains("total") && !tr.classList.contains("cash"));
-    trs.forEach((tr, i) => { tr.style.display = n && i >= n ? "none" : ""; });
-    const cnt = $(`#cnt-${id}`); if (cnt) cnt.textContent = n && trs.length > n ? `${n} / ${trs.length}행` : `${trs.length}행`;
+    const tbl = $(`#${id}`), wrap = tbl && tbl.closest(".tbl-wrap"); if (!wrap) return;
+    const trs = [...tbl.querySelectorAll("tbody tr")].filter(tr => !tr.classList.contains("total") && !tr.classList.contains("cash"));
+    const all = tbl.querySelectorAll("tbody tr").length;
+    wrap.style.maxHeight = "none";
+    if (n && all > n) {
+      const hh = el => el.getBoundingClientRect().height;   // 소수점까지 (offsetHeight는 반올림돼 마지막 행이 살짝 잘림)
+      let h = (tbl.tHead ? hh(tbl.tHead) : 0) + trs.slice(0, n).reduce((a, tr) => a + hh(tr), 0);
+      h = Math.ceil(h) + 1;
+      wrap.style.maxHeight = h + "px";
+      wrap.style.maxHeight = h + (wrap.offsetHeight - wrap.clientHeight) + "px";   // 가로 스크롤바 높이만큼 더
+    }
+    const cnt = $(`#cnt-${id}`); if (cnt) cnt.textContent = n && all > n ? `전체 ${nf(trs.length)}행 · 스크롤` : `${nf(trs.length)}행`;
   }
+
 
   /* 기간 필터 아래 요약 문구 */
   function renderPeriodSummary(R) {
@@ -986,7 +997,7 @@
     const b = ev.target.closest("button"); if (!b) return;
     setPeriod(b.dataset.r); periodChanged();   // 그래프 버튼도 위쪽 기간 필터와 같이 움직임
   });
-  let rz; window.addEventListener("resize", () => { clearTimeout(rz); rz = setTimeout(() => S.base && renderCharts(S.scenario ? simulate(true) : S.base), 200); });
+  let rz; window.addEventListener("resize", () => { clearTimeout(rz); rz = setTimeout(() => { if (!S.base) return; renderCharts(S.scenario ? simulate(true) : S.base); ["t1", "t2", "t3"].forEach(applyLimit); }, 200); });
   window.addEventListener("scroll", () => Charts.hideTip(), { passive: true });
 
   (async function init() {

@@ -126,7 +126,7 @@ code { font-size: 12px; background: var(--grid); padding: 1px 5px; border-radius
 /* 기간 필터 · 표 스크롤 · 행 수 */
 .period .card-h { margin-bottom: 4px; }
 .period input[type=date] { font: inherit; border: 1px solid var(--line); border-radius: 7px; padding: 5px 8px; background: var(--surface); color: var(--text); }
-.tbl-wrap.scroll { max-height: 60vh; overflow-y: auto; }
+.tbl-wrap.scroll { overflow-y: auto; }   /* 높이는 행 수 선택에 맞춰 app.js가 정함 */
 .cnt { color: var(--text2); font-size: 12px; white-space: nowrap; }
 .pwbox { display: inline-flex; gap: 6px; align-items: center; }
 .pwbox input { font: inherit; border: 1px solid var(--line); border-radius: 7px; padding: 6px 8px; background: var(--surface); color: var(--text); width: 160px; }

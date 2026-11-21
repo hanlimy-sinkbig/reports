@@ -152,3 +152,16 @@ code { font-size: 12px; background: var(--grid); padding: 1px 5px; border-radius
 .period input[type=date].on { border-color: var(--s1); box-shadow: 0 0 0 2px color-mix(in srgb, var(--s1) 25%, transparent); color: var(--s1); font-weight: 700; }
 .card.period.active { border-color: color-mix(in srgb, var(--s1) 55%, var(--line)); }
 .psum b.pdate { color: var(--s1); }
+
+/* 표: 앞쪽 열 고정 · 그림자 · 열 선택 */
+.tbl-shell { position: relative; }
+.tbl-shell::after { content: ""; position: absolute; top: 0; right: 0; bottom: 0; width: 28px; pointer-events: none; opacity: 0; transition: opacity .15s;
+  background: linear-gradient(to right, transparent, rgba(0,0,0,.13)); border-radius: 0 6px 6px 0; }
+.tbl-shell.more-r::after { opacity: 1; }
+@media (prefers-color-scheme: dark) { .tbl-shell::after { background: linear-gradient(to right, transparent, rgba(0,0,0,.55)); } }
+td.stick, th.stick { position: sticky; z-index: 1; background: var(--surface); }
+th.stick { z-index: 3; }
+th { z-index: 2; }
+.tbl-wrap.sx .stick-last { box-shadow: 6px 0 6px -5px rgba(0,0,0,.28); }
+.colpick .ms-pop { left: auto; right: 0; }
+td[data-col="name"] { max-width: 168px; overflow: hidden; text-overflow: ellipsis; }   /* 긴 종목명은 … 로 줄임 */

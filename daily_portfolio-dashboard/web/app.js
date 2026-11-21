@@ -409,10 +409,65 @@
     document.querySelector(".card.period").classList.toggle("active", on);
   }
   function syncChartButtons(p) { document.querySelectorAll("#ranges button").forEach(x => x.classList.toggle("on", x.dataset.r === p)); }
+  /* ───────── 열 보기 · 첫 열 고정 ─────────
+     표마다 열 키를 붙여(data-col) CSS로 숨기고, 앞쪽 열은 가로로 밀어도 고정. 숨긴 열은 이 기기에 기억 */
+  const COLKEYS = {
+    t1: ["date", "market", "name", "ticker", "side", "price", "qty", "cur", "fx", "amt", "fee", "tax", "target", "stop", "reason", "memo", "account"],
+    t2: ["name", "market", "qty", "avg", "price", "chg", "vol", "valueK", "costK", "pnlK", "ret", "weight", "realK", "tgt"],
+    t3: ["name", "market", "qty", "avg", "price", "chg", "vol", "valueK", "costK", "pnlK", "ret", "weight", "realK", "target", "stop"]
+  };
+  const STICK = { t1: 3, t2: 1, t3: 1 };   // 고정할 앞쪽 열 수 (① 날짜·구분·종목, ②③ 종목)
+  const COL_DEFAULT_HIDE = { t1: ["cur", "fx", "memo", "account"], t2: ["chg", "vol"], t3: ["chg", "vol", "realK"] };
+  const COLS_KEY = "pf_cols_v1";
+  let HIDE = (() => { try { const v = JSON.parse(localStorage.getItem(COLS_KEY) || "null"); if (v) return v; } catch (e) { } return JSON.parse(JSON.stringify(COL_DEFAULT_HIDE)); })();
+  function colStyle() {
+    let el = $("#colstyle"); if (!el) { el = document.createElement("style"); el.id = "colstyle"; document.head.appendChild(el); }
+    el.textContent = Object.entries(HIDE).flatMap(([t, ks]) => ks.map(k => `#${t} [data-col="${k}"]{display:none}`)).join("\n");
+  }
+  function decorate(id) {   // 열 키 붙이기 + 앞쪽 열 고정 위치 계산
+    const tbl = $(`#${id}`), keys = COLKEYS[id]; if (!tbl || !keys) return;
+    [...tbl.rows].forEach(tr => { if (tr.cells.length === keys.length) [...tr.cells].forEach((c, i) => { c.dataset.col = keys[i]; }); });
+    tbl.querySelectorAll('td[data-col="name"]').forEach(c => { if (!c.title) c.title = c.textContent.trim(); });   // 잘린 긴 종목명은 마우스를 올리면 전체 표시
+    const k = STICK[id] || 0, head = tbl.tHead && tbl.tHead.rows[0]; if (!head) return;
+    let left = 0; const lefts = [];
+    for (let i = 0; i < k; i++) { lefts.push(left); left += head.cells[i].getBoundingClientRect().width; }
+    [...tbl.rows].forEach(tr => { if (tr.cells.length !== keys.length) return; for (let i = 0; i < k; i++) { const c = tr.cells[i]; c.classList.add("stick"); c.classList.toggle("stick-last", i === k - 1); c.style.left = lefts[i] + "px"; } });
+    edgeShadow(tbl.closest(".tbl-wrap"));
+  }
+  function edgeShadow(wrap) {   // 왼쪽: 고정 열 경계 그림자, 오른쪽: 옆에 열이 더 있으면 그림자
+    if (!wrap) return;
+    wrap.classList.toggle("sx", wrap.scrollLeft > 0);
+    wrap.parentElement.classList.toggle("more-r", wrap.scrollLeft + wrap.clientWidth < wrap.scrollWidth - 2);
+  }
+  function colPicker(id) {   // 카드 위쪽 필터 줄에 [열] 선택 상자
+    const sel = document.querySelector(`select.limit[data-t="${id}"]`); if (!sel || $(`#cols-${id}`)) return;
+    const labels = [...$(`#${id}`).tHead.rows[0].cells].map(c => c.textContent.trim()), keys = COLKEYS[id], k = STICK[id] || 0;
+    const box = document.createElement("details"); box.className = "ms colpick"; box.id = `cols-${id}`;
+    box.innerHTML = `<summary></summary><div class="ms-pop"><div class="ms-act"><button type="button" data-a="all">모두 보기</button><button type="button" data-a="def">기본값</button></div>` +
+      keys.map((key, i) => i < k ? "" : `<label><input type="checkbox" value="${key}">${esc(labels[i] || key)}</label>`).join("") + `</div>`;
+    sel.before(box);
+    const sync = () => {
+      box.querySelectorAll("input").forEach(x => { x.checked = !HIDE[id].includes(x.value); });
+      box.querySelector("summary").textContent = `열: ${keys.length - HIDE[id].length} / ${keys.length}`;
+      box.classList.toggle("on", HIDE[id].length > 0);
+    };
+    const apply = () => { try { localStorage.setItem(COLS_KEY, JSON.stringify(HIDE)); } catch (e) { } colStyle(); sync(); decorate(id); applyLimit(id); };
+    box.addEventListener("change", ev => { if (ev.target.type !== "checkbox") return; HIDE[id] = [...box.querySelectorAll("input")].filter(x => !x.checked).map(x => x.value); apply(); });
+    box.addEventListener("click", ev => { const a = ev.target.dataset && ev.target.dataset.a; if (!a) return; HIDE[id] = a === "all" ? [] : [...COL_DEFAULT_HIDE[id]]; apply(); });
+    sync();
+  }
+  Object.keys(COL_DEFAULT_HIDE).forEach(t => { if (!Array.isArray(HIDE[t])) HIDE[t] = [...COL_DEFAULT_HIDE[t]]; });
+  colStyle();
+  document.querySelectorAll(".tbl-wrap").forEach(w => {   // 오른쪽 그림자를 겹칠 수 있게 한 겹 감싸기
+    const shell = document.createElement("div"); shell.className = "tbl-shell"; w.before(shell); shell.appendChild(w);
+    w.addEventListener("scroll", () => edgeShadow(w), { passive: true });
+  });
+
   /* 표 높이: 고른 행 수(10·20·50)만큼만 보이고, 표 안에서 스크롤하면 나머지 행도 모두 볼 수 있음. '전체'는 높이 제한 없음 */
   function applyLimit(id) {
     const sel = document.querySelector(`select.limit[data-t="${id}"]`), n = sel ? +sel.value : 0;
     const tbl = $(`#${id}`), wrap = tbl && tbl.closest(".tbl-wrap"); if (!wrap) return;
+    colPicker(id); decorate(id);
     const trs = [...tbl.querySelectorAll("tbody tr")].filter(tr => !tr.classList.contains("total") && !tr.classList.contains("cash"));
     const all = tbl.querySelectorAll("tbody tr").length;
     wrap.style.maxHeight = "none";
@@ -424,6 +479,7 @@
       wrap.style.maxHeight = h + (wrap.offsetHeight - wrap.clientHeight) + "px";   // 가로 스크롤바 높이만큼 더
     }
     const cnt = $(`#cnt-${id}`); if (cnt) cnt.textContent = n && all > n ? `전체 ${nf(trs.length)}행 · 스크롤` : `${nf(trs.length)}행`;
+    edgeShadow(wrap);
   }
 
 
@@ -520,12 +576,15 @@
   }
   function totalRow(R, tail = 1) {
     const v = R.rows.reduce((a, r) => a + r.valueK, 0), co = R.rows.reduce((a, r) => a + r.costK, 0), re = R.rows.reduce((a, r) => a + r.realK, 0);
+    const row = (cls_, cells) => `<tr class="${cls_}">${cells.map(([html, k, c]) => `<td class="${c || ""}"${k ? ` data-c="${k}"` : ""}>${html}</td>`).join("")}</tr>`;
+    const blank = n => Array.from({ length: n }, () => [""]);
     let h = "";
-    if (R.hasCash) h += `<tr class="cash"><td class="l">현금</td><td class="l">원화</td><td colspan="5"></td><td data-c="cash">${won(R.cash)}</td><td colspan="${5 + tail}"></td></tr>`;
-    h += `<tr class="total"><td class="l">합계</td><td></td><td colspan="5"></td><td data-c="tv">${won(v + (R.hasCash ? R.cash : 0))}</td><td data-c="tc">${won(co)}</td>
-      <td data-c="tp" class="${cls(v - co)}">${signed(v - co)}</td><td data-c="tr" class="${cls(v - co)}">${pct(co > 0 ? v / co - 1 : null)}</td><td>100%</td><td class="${cls(re)}">${signed(re)}</td><td colspan="${tail}"></td></tr>`;
+    if (R.hasCash) h += row("cash", [["현금", "", "l"], ["원화", "", "l"], ...blank(5), [won(R.cash), "cash"], ...blank(5 + tail)]);
+    h += row("total", [["합계", "", "l"], [""], ...blank(5), [won(v + (R.hasCash ? R.cash : 0)), "tv"], [won(co), "tc"],
+      [signed(v - co), "tp", cls(v - co)], [pct(co > 0 ? v / co - 1 : null), "tr", cls(v - co)], ["100%"], [signed(re), "", cls(re)], ...blank(tail)]);
     return h;
   }
+
   function renderT2() {
     let R = S.base;
     if (S.pFrom || S.pTo) {
@@ -568,6 +627,7 @@
       tmp.querySelectorAll("td[data-c]").forEach(td => { const t = tr.querySelector(`td[data-c="${td.dataset.c}"]`); if (t) { t.innerHTML = td.innerHTML; t.className = td.className; } });
     });
     const tb = $("#t3 tbody"); tb.querySelectorAll("tr.total, tr.cash").forEach(x => x.remove()); tb.insertAdjacentHTML("beforeend", totalRow(R, 2));
+    decorate("t3");
     markChanged();
   }
   function readEdits() {

@@ -6,7 +6,7 @@
   "use strict";
   const $ = s => document.querySelector(s);
   const LS_KEY = "pf_csv_v1";
-  const COLORS = ["var(--s1)", "var(--s2)", "var(--s3)", "var(--s4)", "var(--s5)", "var(--s6)", "var(--s7)", "var(--s8)"];
+  const COLORS = Array.from({ length: 16 }, (_, i) => `var(--s${i + 1})`);   // 16색, 17번째부터 반복
   const SECTOR_HINT = { "005930": "반도체", "000660": "반도체", LRCX: "반도체", SNDK: "반도체", MU: "반도체", NVDA: "반도체", AMAT: "반도체", TSM: "반도체", ASML: "반도체", AVGO: "반도체", AMD: "반도체", INTC: "반도체" };
   const DATA_BASE = (() => {
     const h = location.hostname;
@@ -117,8 +117,15 @@
       if (r.target != null) I.target = r.target; if (r.stop != null) I.stop = r.stop;
       if (r.side === "BUY" && r.reason) I.thesis = r.reason;
     });
-    if (S.keys.length > 8) S.warnings.push("종목이 8개를 넘어 9번째부터는 색이 반복됩니다.");
     applyTargets();
+  }
+
+  /* 색 배정: 현재 보유 종목(평가금액 큰 순)에 1번 색부터, 나머지는 그 뒤로 (② 표·도넛·수익률 그래프에서 보유 종목끼리 색이 겹치지 않게) */
+  function assignColors() {
+    const held = S.base.rows.filter(r => r.qty > 0).sort((a, b) => b.valueK - a.valueK).map(r => r.key);
+    const order = held.concat(S.keys.filter(k => !held.includes(k)));
+    order.forEach((k, i) => { S.inst[k].color = COLORS[i % COLORS.length]; });
+    S.base.rows.forEach(r => { r.color = S.inst[r.key].color; });
   }
 
   /* ───────── 목표가격.csv ─────────
@@ -858,6 +865,7 @@
     applySplits();
     S.edits = {}; S.fxEdit = null; S.scenario = false;
     S.base = simulate(false);
+    assignColors();
     $("#fxEdit").value = inFmt(S.base.fx, 1);
     $("#app").hidden = false; $("#btnForget").hidden = !fromStorage && !safeGet();
     fillFilters(); renderT1(); renderT2(); renderT3(); renderAll();

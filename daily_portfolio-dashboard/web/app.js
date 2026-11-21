@@ -68,9 +68,11 @@
     s = String(s || "").trim().toLowerCase();
     if (/매수|buy/.test(s)) return "BUY"; if (/매도|sell/.test(s)) return "SELL"; if (/배당|div/.test(s)) return "DIV";
     if (/입금|deposit/.test(s)) return "DEP"; if (/출금|withdraw/.test(s)) return "WD"; if (/분할|split/.test(s)) return "SPLIT";
+    if (/입고|transfer.?in/.test(s)) return "TIN"; if (/이자|interest|기타수익/.test(s)) return "INT";
     return null;
   }
-  const SIDE_KO = { BUY: "매수", SELL: "매도", DIV: "배당", DEP: "입금", WD: "출금", SPLIT: "분할" };
+  const SIDE_KO = { BUY: "매수", SELL: "매도", DIV: "배당", DEP: "입금", WD: "출금", SPLIT: "분할", TIN: "입고", INT: "이자" };
+  const HOLD_SIDES = ["BUY", "SELL", "DIV", "SPLIT", "TIN"];   // 종목이 있어야 하는 매매
 
   function ingest(text) {
     const grid = parseCSV(text);
@@ -94,14 +96,14 @@
       rec.key = rec.ticker || rec.name;
       S.raw.push(rec);
       if (!rec.date || !rec.side || rec.price == null) { S.warnings.push(`${rec.line}행: 날짜·매매·단가 중 읽을 수 없는 값이 있어 건너뜀`); return; }
-      if (["BUY", "SELL", "DIV", "SPLIT"].includes(rec.side) && !rec.key) { S.warnings.push(`${rec.line}행: 종목/티커가 없어 건너뜀`); return; }
+      if (HOLD_SIDES.includes(rec.side) && !rec.key) { S.warnings.push(`${rec.line}행: 종목/티커가 없어 건너뜀`); return; }
       S.rows.push(rec);
     });
     S.rows.sort((a, b) => a.date < b.date ? -1 : a.date > b.date ? 1 : a.line - b.line);
     // 종목 정보
     S.inst = {}; S.keys = [];
     S.rows.forEach(r => {
-      if (!["BUY", "SELL", "DIV", "SPLIT"].includes(r.side)) return;
+      if (!HOLD_SIDES.includes(r.side)) return;
       if (!S.inst[r.key]) { S.inst[r.key] = { key: r.key, name: r.name || r.key, market: r.market || (r.cur === "USD" ? "미장" : "국장"), cur: r.cur, color: COLORS[S.keys.length % COLORS.length] }; S.keys.push(r.key); }
       const I = S.inst[r.key];
       if (r.target != null) I.target = r.target; if (r.stop != null) I.stop = r.stop;
@@ -182,7 +184,7 @@
         .filter(([d, x]) => !manual.some(([md, mx]) => near(md, d) && Math.abs(mx / x - 1) < 0.01));
       [...manual, ...auto].forEach(([d, ratio]) => {
         if (!ratio || ratio === 1) return;
-        S.rows.forEach(r => { if (r.key === k && r.date < d && (r.side === "BUY" || r.side === "SELL" || r.side === "DIV")) { r.aqty *= ratio; r.aprice /= ratio; } });
+        S.rows.forEach(r => { if (r.key === k && r.date < d && (r.side === "BUY" || r.side === "SELL" || r.side === "DIV" || r.side === "TIN")) { r.aqty *= ratio; r.aprice /= ratio; } });
         S.inst[k].splitNote = (S.inst[k].splitNote ? S.inst[k].splitNote + ", " : "") + `${d} 1:${ratio} 분할 반영`;
       });
     });
@@ -191,7 +193,7 @@
   /* ───────── 시세 ───────── */
   function lastLE(dates, d) { let lo = 0, hi = dates.length - 1, ans = -1; while (lo <= hi) { const m = (lo + hi) >> 1; if (dates[m] <= d) { ans = m; lo = m + 1; } else hi = m - 1; } return ans; }
   function histOf(k) { const t = S.prices && S.prices.tickers[k]; return t && t.history && t.history.dates.length ? t.history : null; }
-  function lastTradePx(k, d) { let p = null; for (const r of S.rows) { if (r.date > d) break; if (r.key === k && (r.side === "BUY" || r.side === "SELL")) p = r.aprice; } return p; }
+  function lastTradePx(k, d) { let p = null; for (const r of S.rows) { if (r.date > d) break; if (r.key === k && (r.side === "BUY" || r.side === "SELL" || (r.side === "TIN" && r.aprice > 0))) p = r.aprice; } return p; }
   function priceAt(k, d) {
     const h = histOf(k);
     if (h) { const i = lastLE(h.dates, d); if (i >= 0) return h.close[i]; }
@@ -220,9 +222,9 @@
     set.add(T);
     const dates = [...set].sort();
     const pos = {}; S.keys.forEach(k => pos[k] = { qty: 0, costL: 0, costK: 0, realK: 0, divK: 0 });
-    let cash = 0, dep = 0, real = 0, div = 0, fees = 0, taxes = 0, hasCash = false, ei = 0;
+    let cash = 0, dep = 0, real = 0, div = 0, intr = 0, fees = 0, taxes = 0, hasCash = false, ei = 0;
     const flows = {}, trades = [], usRealYear = {};
-    const F = m => flows[m] || (flows[m] = { buy: 0, sell: 0, real: 0, div: 0 });
+    const F = m => flows[m] || (flows[m] = { buy: 0, sell: 0, real: 0, div: 0, int: 0 });
     const tl = { dates, asset: [], value: [], cost: [], unreal: [], realCum: [], dep: [], cash: [], ret: [], w: {}, r: {} };
     S.keys.forEach(k => { tl.w[k] = []; tl.r[k] = []; });
     dates.forEach((d, di) => {
@@ -244,6 +246,10 @@
           p.realK += pnl; real += pnl; cash += procK; F(m).sell += e.aprice * q * fxT; F(m).real += pnl;
           trades.push({ date: e.date, key: e.key, pnl, ret: pnl / basisK, line: e.line });
           if (e.cur === "USD") usRealYear[e.date.slice(0, 4)] = (usRealYear[e.date.slice(0, 4)] || 0) + pnl;
+        } else if (e.side === "TIN") {   // 타사대체입고: 보유·원가 증가, 현금 대신 순입금(주식으로 들어온 자산)에 더함
+          p.costL += amt; p.costK += amt * fxT; p.qty += e.aqty; dep += amt * fxT; hasCash = true;
+        } else if (e.side === "INT") {   // 이자·리워드 등: 현금·실현손익 (세금·수수료는 차감)
+          const v = (amt - e.fee - e.tax) * fxT; real += v; intr += v; cash += v; F(m).int += v; F(m).real += v;
         } else if (e.side === "DIV") {
           const v = (amt - e.fee - e.tax) * fxT; p.divK += v; real += v; div += v; cash += v; F(m).div += v; F(m).real += v;
         } else if (e.side === "DEP" || e.side === "WD") {
@@ -286,7 +292,7 @@
     const val = rows.reduce((a, r) => a + r.valueK, 0);
     rows.forEach(r => r.weight = val > 0 ? r.valueK / val : 0);
     const n = dates.length - 1;
-    return { tl, rows, fx, cash: tl.cash[n], dep, real, div, fees, taxes, hasCash, flows, trades, usRealYear, value: val, cost: tl.cost[n], asset: tl.asset[n] };
+    return { tl, rows, fx, cash: tl.cash[n], dep, real, div, intr, fees, taxes, hasCash, flows, trades, usRealYear, value: val, cost: tl.cost[n], asset: tl.asset[n] };
   }
 
   /* ───────── 화면: 타일 ───────── */
@@ -297,7 +303,7 @@
       ["총 자산", won(R.asset), R.hasCash ? `순입금 ${short(R.dep)}원` : "현금 기록 없음", ""],
       ["총 손익", signed(totalPnl), pct(totRet), cls(totalPnl)],
       ["평가손익(보유)", signed(R.value - R.cost), pct(R.cost > 0 ? R.value / R.cost - 1 : null), cls(R.value - R.cost)],
-      ["실현손익(배당 포함)", signed(R.real), `배당 ${short(R.div)}원`, cls(R.real)],
+      ["실현손익(배당·이자 포함)", signed(R.real), `배당 ${short(R.div)}원${R.intr ? ` · 이자 ${short(R.intr)}원` : ""}`, cls(R.real)],
       ["현금", R.hasCash ? won(R.cash) : "–", R.hasCash && R.asset > 0 ? `자산의 ${(R.cash / R.asset * 100).toFixed(1)}%` : "입금 행을 넣으면 계산", ""],
       ["USD/KRW", nf(R.fx, 1), S.prices ? "시세 기준" : "체결 환율 기준", ""]
     ];
@@ -319,7 +325,7 @@
       rows.map(r => {
         const fx = r.cur === "USD" ? (r.fx || (r.date ? fxAt(r.date) : null)) : 1;
         const amt = r.price != null && r.side !== "SPLIT" ? r.price * r.qty * (fx || 0) : null;
-        const tag = r.side === "BUY" ? "buy" : r.side === "SELL" ? "sell" : "";
+        const tag = r.side === "BUY" || r.side === "TIN" ? "buy" : r.side === "SELL" ? "sell" : "";
         return `<tr><td class="l">${esc(r.date || "?")}</td><td class="l">${esc(r.market)}</td><td class="l">${esc(r.name)}</td><td class="l">${esc(r.ticker)}</td>
         <td class="l"><span class="tag ${tag}">${esc(SIDE_KO[r.side] || r.sideRaw)}</span></td><td>${r.side === "DEP" || r.side === "WD" ? won(r.price) : r.side === "SPLIT" ? "1:" + nf(splitRatio(r), splitRatio(r) % 1 ? 4 : 0) : px(r.price, r.cur)}</td><td>${nf(r.qty, r.qty % 1 ? 4 : 0)}</td>
         <td>${esc(r.cur)}</td><td${r.fxAuto ? ' class="muted" title="환율 칸이 비어 그날 시세 환율로 채움"' : ""}>${r.cur === "USD" ? nf(r.fx, 1) : ""}</td><td>${amt == null ? "" : won(amt)}</td><td>${r.fee ? px(r.fee, r.cur) : ""}</td><td>${r.tax ? px(r.tax, r.cur) : ""}</td>
@@ -440,7 +446,7 @@
     Charts.bars($("#cReal"), {
       labels: months.map(mLabel), series: [{ name: "실현손익", color: "var(--up)", values: months.map(m => R.flows[m].real) }],
       signColor: { pos: "var(--up)", neg: "var(--down)" }, fmt: (v, full) => full ? signed(v) : short(v),
-      extra: i => { const f = R.flows[months[i]]; return `<div>매도 손익<span>${signed(f.real - f.div)}</span></div><div>배당<span>${signed(f.div)}</span></div>`; }
+      extra: i => { const f = R.flows[months[i]]; return `<div>매도 손익<span>${signed(f.real - f.div - f.int)}</span></div><div>배당<span>${signed(f.div)}</span></div>${f.int ? `<div>이자<span>${signed(f.int)}</span></div>` : ""}`; }
     });
     Charts.bars($("#cFlow"), { labels: months.map(mLabel), series: [{ name: "매수", color: "var(--up)", values: months.map(m => R.flows[m].buy) }, { name: "매도", color: "var(--down)", values: months.map(m => R.flows[m].sell) }], fmt: (v, full) => full ? won(v) : short(v) });
     const tr = R.trades.filter(x => x.date >= t.dates[0]);

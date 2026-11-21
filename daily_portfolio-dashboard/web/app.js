@@ -351,7 +351,8 @@
     const t = today(), d = new Date(t + "T00:00:00");
     const back = { "1M": 1, "3M": 3, "6M": 6, "1Y": 12 }[p];
     S.pTo = p === "ALL" ? "" : t;
-    S.pFrom = p === "ALL" ? "" : p === "YTD" ? t.slice(0, 4) + "-01-01" : (d.setMonth(d.getMonth() - back), d.toISOString().slice(0, 10));
+    const ymd = x => `${x.getFullYear()}-${String(x.getMonth() + 1).padStart(2, "0")}-${String(x.getDate()).padStart(2, "0")}`;
+    S.pFrom = p === "ALL" ? "" : p === "YTD" ? t.slice(0, 4) + "-01-01" : (d.setMonth(d.getMonth() - back), ymd(d));
     $("#pFrom").value = S.pFrom; $("#pTo").value = S.pTo;
     document.querySelectorAll("#pRanges button").forEach(x => x.classList.toggle("on", x.dataset.p === p));
     syncChartButtons(p);
@@ -378,6 +379,10 @@
     const traded = new Set(rows.filter(r => r.key && ["BUY", "SELL", "TIN"].includes(r.side)).map(r => r.key));
     const mk = { 국장: new Set(), 미장: new Set() };
     rows.forEach(r => { if (traded.has(r.key) && mk[r.market]) mk[r.market].add(r.key); });
+    const fxOf = r => r.cur === "USD" ? (r.fx || fxAt(r.date) || R.fx) : 1;
+    const divNet = rows.filter(r => r.side === "DIV").reduce((a, r) => a + ((r.aprice ?? r.price ?? 0) * (r.aqty ?? r.qty ?? 0) - (r.fee || 0) - (r.tax || 0)) * fxOf(r), 0);
+    const tin = rows.filter(r => r.side === "TIN").reduce((a, r) => a + (r.aprice ?? r.price ?? 0) * (r.aqty ?? r.qty ?? 0) * fxOf(r), 0);
+    const etc = rows.length - cnt("BUY") - cnt("SELL") - cnt("DIV") - cnt("DEP") - cnt("WD");
     const fee = rows.reduce((a, r) => a + ((r.fee || 0) + (r.tax || 0)) * (r.cur === "USD" ? (r.fx || fxAt(r.date) || R.fx) : 1), 0);
     const real = R.trades.filter(x => inPeriod(x.date)).reduce((a, x) => a + x.pnl, 0);
     let pnl = null;
@@ -390,13 +395,13 @@
     const it = (k, v, c) => `<span>${k}<b class="${c || ""}">${v}</b></span>`;
     $("#pSum").innerHTML = [
       it("기간", `${S.pFrom || first} ~ ${S.pTo || last}`, S.pFrom || S.pTo ? "pdate" : ""),
-      it("거래", `${nf(rows.length)}건 (매수 ${cnt("BUY")} · 매도 ${cnt("SELL")} · 배당 ${cnt("DIV")}${cnt("DEP") + cnt("WD") ? ` · 입출금 ${cnt("DEP") + cnt("WD")}` : ""})`),
+      it("거래", `${nf(rows.length)}건 (매수 ${cnt("BUY")} · 매도 ${cnt("SELL")} · 배당 ${cnt("DIV")}${cnt("DEP") + cnt("WD") ? ` · 입출금 ${cnt("DEP") + cnt("WD")}` : ""}${etc ? ` · 기타 ${etc}` : ""})`),
       it("거래 종목", `${traded.size}개 (국장 ${mk.국장.size} · 미장 ${mk.미장.size})`),
       it("매수액", won(sum("BUY"))), it("매도액", won(sum("SELL"))),
-      it("실현손익(매도)", signed(real), cls(real)), it("배당", won(sum("DIV"))),
+      it("실현손익(매도)", signed(real), cls(real)), it("배당(세후)", won(divNet)),
       it("수수료+세금", won(fee)),
       it(S.pFrom || S.pTo ? "기간 손익" : "총 손익", signed(pnl), cls(pnl)),
-      ...(cnt("DEP") + cnt("WD") ? [it("순입금", signed(sum("DEP") - sum("WD")))] : [])
+      ...(cnt("DEP") + cnt("WD") + cnt("TIN") ? [it(tin ? "순입금(주식 입고 포함)" : "순입금", signed(sum("DEP") - sum("WD") + tin))] : [])
     ].join("");
   }
 
@@ -603,7 +608,7 @@
         if (!inPeriod(r.date)) return;
         const f = r.cur === "USD" ? (r.fx || fxAt(r.date) || R.fx) : 1;
         feeTax += ((r.fee || 0) + (r.tax || 0)) * f;
-        if (r.side === "DIV") divSum += (r.price || 0) * (r.qty || 0) * f;
+        if (r.side === "DIV") divSum += ((r.aprice ?? r.price ?? 0) * (r.aqty ?? r.qty ?? 0) - (r.fee || 0) - (r.tax || 0)) * f;
       });
     }
     const best = tr.reduce((a, x) => !a || x.pnl > a.pnl ? x : a, null), worst = tr.reduce((a, x) => !a || x.pnl < a.pnl ? x : a, null);
@@ -612,7 +617,7 @@
       ["평균 이익", aw != null ? signed(aw) : "–"], ["평균 손실", al != null ? signed(al) : "–"],
       ["손익비", aw != null && al ? (aw / -al).toFixed(2) + " : 1" : "–"], ["최대 낙폭(MDD)", R.ddMin != null && isFinite(R.ddMin) ? R.ddMin.toFixed(1) + "%" : "–"],
       ["최고 매매", best ? `${S.inst[best.key].name} ${signed(best.pnl)}` : "–"], ["최악 매매", worst ? `${S.inst[worst.key].name} ${signed(worst.pnl)}` : "–"],
-      ["수수료+세금", won(feeTax)], ["배당 합계", won(divSum)]
+      ["수수료+세금", won(feeTax)], ["배당 합계(세후)", won(divSum)]
     ];
     $("#statsCap").textContent = on ? `선택 기간 기준 (${S.pFrom || "처음"} ~ ${S.pTo || "오늘"})` : "전체 기간 기준";
     $("#stats").innerHTML = s.map(([k, v]) => `<div><div class="k">${k}</div><div class="v">${v}</div></div>`).join("");

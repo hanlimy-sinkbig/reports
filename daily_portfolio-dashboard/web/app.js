@@ -354,7 +354,7 @@
       return {
         key: k, name: I.name, market: I.market, cur: I.cur, qty: p.qty, avg, price, chg: q.prev ? price / q.prev - 1 : null,
         volume: q.volume, avgVol: q.avgVol, src: q.src, valueK, costK: p.costK, pnlK: valueK - p.costK, ret: p.costK > 0 ? valueK / p.costK - 1 : null,
-        realK: p.realK + p.divK, target: I.target, stop: I.stop, fxCost: p.costL > 0 ? p.costK / p.costL : null, color: I.color, sector: SECTOR_HINT[k] || q.sector || "기타"
+        realK: p.realK + p.divK, target: sc && S.edits[k] && "target" in S.edits[k] ? S.edits[k].target : I.target, stop: sc && S.edits[k] && "stop" in S.edits[k] ? S.edits[k].stop : I.stop, fxCost: p.costL > 0 ? p.costK / p.costL : null, color: I.color, sector: SECTOR_HINT[k] || q.sector || "기타"
       };
     });
     const val = rows.reduce((a, r) => a + r.valueK, 0);
@@ -484,6 +484,8 @@
 
   /* ───────── 표 ②·③ ───────── */
   const COLS = [["종목", "l"], ["구분", "l"], ["보유수량", ""], ["평균단가", ""], ["현재가", ""], ["등락률", ""], ["거래량", ""], ["평가금액", ""], ["매입금액", ""], ["평가손익", ""], ["수익률", ""], ["비중", ""], ["실현손익", ""], ["목표가 / 손절가", ""]];
+  const COLS3 = COLS.slice(0, -1).concat([["목표가", ""], ["손절가", ""]]);   // ③ 시나리오 표: 목표가·손절가를 따로 고칠 수 있게
+  const TS = ["target", "stop"];   // 빈칸이면 '없음'(0이 아님)
   function cells(r, editable) {
     const ed = (f, v, d) => editable ? `<td class="edit" data-k="${esc(r.key)}" data-f="${f}"><input type="text" inputmode="decimal" data-d="${d}" value="${inFmt(v, d)}"></td>` : null;
     const c = (col, html, k) => `<td class="${k || ""}" data-c="${col}">${html}</td>`;
@@ -496,14 +498,14 @@
       ${ed("price", r.price, r.cur === "USD" ? 2 : 0) || c("price", px(r.price, r.cur))}
       ${c("chg", pct(r.chg, 2), cls(r.chg))}${c("vol", vol)}
       ${c("valueK", won(r.valueK))}${c("costK", won(r.costK))}${c("pnlK", signed(r.pnlK), cls(r.pnlK))}${c("ret", pct(r.ret), cls(r.ret))}
-      ${c("weight", (r.weight * 100).toFixed(1) + "%")}${c("realK", signed(r.realK), cls(r.realK))}${c("tgt", tgt)}`;
+      ${c("weight", (r.weight * 100).toFixed(1) + "%")}${c("realK", signed(r.realK), cls(r.realK))}${editable ? (ed("target", r.target, r.cur === "USD" ? 2 : 0) + ed("stop", r.stop, r.cur === "USD" ? 2 : 0)) : c("tgt", tgt)}`;
   }
-  function totalRow(R) {
+  function totalRow(R, tail = 1) {
     const v = R.rows.reduce((a, r) => a + r.valueK, 0), co = R.rows.reduce((a, r) => a + r.costK, 0), re = R.rows.reduce((a, r) => a + r.realK, 0);
     let h = "";
-    if (R.hasCash) h += `<tr class="cash"><td class="l">현금</td><td class="l">원화</td><td colspan="5"></td><td data-c="cash">${won(R.cash)}</td><td colspan="6"></td></tr>`;
+    if (R.hasCash) h += `<tr class="cash"><td class="l">현금</td><td class="l">원화</td><td colspan="5"></td><td data-c="cash">${won(R.cash)}</td><td colspan="${5 + tail}"></td></tr>`;
     h += `<tr class="total"><td class="l">합계</td><td></td><td colspan="5"></td><td data-c="tv">${won(v + (R.hasCash ? R.cash : 0))}</td><td data-c="tc">${won(co)}</td>
-      <td data-c="tp" class="${cls(v - co)}">${signed(v - co)}</td><td data-c="tr" class="${cls(v - co)}">${pct(co > 0 ? v / co - 1 : null)}</td><td>100%</td><td class="${cls(re)}">${signed(re)}</td><td></td></tr>`;
+      <td data-c="tp" class="${cls(v - co)}">${signed(v - co)}</td><td data-c="tr" class="${cls(v - co)}">${pct(co > 0 ? v / co - 1 : null)}</td><td>100%</td><td class="${cls(re)}">${signed(re)}</td><td colspan="${tail}"></td></tr>`;
     return h;
   }
   function renderT2() {
@@ -524,19 +526,19 @@
   function editRows() {   // 표③ 현재 입력값으로 행 다시 계산
     const fx = num($("#fxEdit").value) || S.base.fx;
     const rows = S.base.rows.filter(b => b.qty > 0).map(b => {
-      const e = S.edits[b.key] || { qty: b.qty, avg: b.avg, price: b.price };
+      const e = S.edits[b.key] || { qty: b.qty, avg: b.avg, price: b.price, target: b.target, stop: b.stop };
       const ratio = b.fxCost || (b.cur === "USD" ? fx : 1);
       const valueK = e.qty * (e.price || 0) * (b.cur === "USD" ? fx : 1), costK = e.qty * (e.avg || 0) * ratio;
-      return Object.assign({}, b, { qty: e.qty, avg: e.avg, price: e.price, valueK, costK, pnlK: valueK - costK, ret: costK > 0 ? valueK / costK - 1 : null, chg: b.chg != null && b.price ? (e.price / (b.price / (1 + b.chg))) - 1 : null });
+      return Object.assign({}, b, { qty: e.qty, avg: e.avg, price: e.price, target: e.target, stop: e.stop, valueK, costK, pnlK: valueK - costK, ret: costK > 0 ? valueK / costK - 1 : null, chg: b.chg != null && b.price ? (e.price / (b.price / (1 + b.chg))) - 1 : null });
     });
     const tv = rows.reduce((a, r) => a + r.valueK, 0); rows.forEach(r => r.weight = tv > 0 ? r.valueK / tv : 0);
     rows.sort((a, b) => b.valueK - a.valueK);   // 평가금액 큰 순
     return { rows, fx, hasCash: S.base.hasCash, cash: S.base.cash };
   }
   function renderT3() {
-    const head = `<thead><tr>${COLS.map(([h, k]) => `<th class="${k}">${h}</th>`).join("")}</tr></thead>`;
+    const head = `<thead><tr>${COLS3.map(([h, k]) => `<th class="${k}">${h}</th>`).join("")}</tr></thead>`;
     const R = editRows();
-    $("#t3").innerHTML = head + "<tbody>" + R.rows.map(r => `<tr data-row="${esc(r.key)}">${cells(r, true)}</tr>`).join("") + totalRow(R) + "</tbody>";
+    $("#t3").innerHTML = head + "<tbody>" + R.rows.map(r => `<tr data-row="${esc(r.key)}">${cells(r, true)}</tr>`).join("") + totalRow(R, 2) + "</tbody>";
     markChanged();
     applyLimit("t3");
   }
@@ -547,19 +549,23 @@
       const tmp = document.createElement("tr"); tmp.innerHTML = cells(r, false);
       tmp.querySelectorAll("td[data-c]").forEach(td => { const t = tr.querySelector(`td[data-c="${td.dataset.c}"]`); if (t) { t.innerHTML = td.innerHTML; t.className = td.className; } });
     });
-    const tb = $("#t3 tbody"); tb.querySelectorAll("tr.total, tr.cash").forEach(x => x.remove()); tb.insertAdjacentHTML("beforeend", totalRow(R));
+    const tb = $("#t3 tbody"); tb.querySelectorAll("tr.total, tr.cash").forEach(x => x.remove()); tb.insertAdjacentHTML("beforeend", totalRow(R, 2));
     markChanged();
   }
   function readEdits() {
     const ed = {};
-    S.base.rows.forEach(b => ed[b.key] = { qty: b.qty, avg: b.avg, price: b.price });
-    document.querySelectorAll("#t3 td.edit").forEach(td => { const v = num(td.querySelector("input").value); ed[td.dataset.k][td.dataset.f] = v == null ? 0 : v; });
+    S.base.rows.forEach(b => ed[b.key] = { qty: b.qty, avg: b.avg, price: b.price, target: b.target, stop: b.stop });
+    document.querySelectorAll("#t3 td.edit").forEach(td => {
+      const inp = td.querySelector("input"), f = td.dataset.f, b = S.base.rows.find(r => r.key === td.dataset.k);
+      if (inp.value === inFmt(b[f], +inp.dataset.d)) return;   // 손대지 않은 칸: 반올림 없이 원래 값
+      const v = num(inp.value); ed[td.dataset.k][f] = v == null || (TS.includes(f) && v <= 0) ? (TS.includes(f) ? null : 0) : v;
+    });
     return ed;
   }
   function markChanged() {
     document.querySelectorAll("#t3 td.edit").forEach(td => {
-      const b = S.base.rows.find(r => r.key === td.dataset.k), v = num(td.querySelector("input").value), o = b[td.dataset.f];
-      td.classList.toggle("changed", v != null && o != null ? Math.abs(v - o) > Math.abs(o) * 1e-9 + 1e-9 : v !== o);
+      const b = S.base.rows.find(r => r.key === td.dataset.k), inp = td.querySelector("input");
+      td.classList.toggle("changed", inp.value !== inFmt(b[td.dataset.f], +inp.dataset.d) && num(inp.value) !== b[td.dataset.f]);   // 표시값 기준으로 비교 (빈칸 = 없음)
     });
     const fx = num($("#fxEdit").value) || 0; $("#fxEdit").parentElement.classList.toggle("changed", Math.abs(fx - S.base.fx) > 1e-6);
   }
@@ -959,7 +965,8 @@
   $("#fxEdit").addEventListener("blur", ev => reFmt(ev.target));
   $("#btnUpdate").addEventListener("click", () => {
     S.edits = readEdits(); S.fxEdit = num($("#fxEdit").value) || S.base.fx;
-    const changed = S.base.rows.some(b => { const e = S.edits[b.key]; return e.qty !== b.qty || Math.abs((e.avg || 0) - (b.avg || 0)) > 1e-9 || Math.abs((e.price || 0) - (b.price || 0)) > 1e-9; }) || Math.abs(S.fxEdit - S.base.fx) > 1e-6;
+    const diff = (a, b) => (a == null) !== (b == null) || (a != null && Math.abs(a - b) > 1e-9);
+    const changed = S.base.rows.some(b => { const e = S.edits[b.key]; return e.qty !== b.qty || Math.abs((e.avg || 0) - (b.avg || 0)) > 1e-9 || Math.abs((e.price || 0) - (b.price || 0)) > 1e-9 || diff(e.target, b.target) || diff(e.stop, b.stop); }) || Math.abs(S.fxEdit - S.base.fx) > 1e-6;
     S.scenario = changed; renderAll();
     document.querySelector(".sec").scrollIntoView({ behavior: "smooth" });
   });

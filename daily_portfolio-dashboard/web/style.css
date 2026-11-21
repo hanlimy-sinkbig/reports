@@ -60,6 +60,7 @@ td.edit { background: var(--edit); padding: 3px 4px; }
 td.edit input { width: 100%; min-width: 92px; border: 1px solid transparent; background: transparent; text-align: right; font: inherit; color: var(--text); padding: 4px 6px; border-radius: 5px; }
 td.edit input:focus { outline: 2px solid var(--s1); background: var(--surface); }
 td.edit.changed { background: var(--edit-on); }
+.badge[hidden] { display: none; }
 .badge { display: inline-block; background: var(--edit-on); border-radius: 8px; padding: 4px 10px; font-size: 12.5px; margin: 8px 0 0; }
 .grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0 12px; }
 .grid .wide { grid-column: 1 / -1; }

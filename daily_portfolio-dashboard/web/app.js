@@ -325,7 +325,9 @@
     S.pFrom = p === "ALL" ? "" : p === "YTD" ? t.slice(0, 4) + "-01-01" : (d.setMonth(d.getMonth() - back), d.toISOString().slice(0, 10));
     $("#pFrom").value = S.pFrom; $("#pTo").value = S.pTo;
     document.querySelectorAll("#pRanges button").forEach(x => x.classList.toggle("on", x.dataset.p === p));
+    syncChartButtons(p);
   }
+  function syncChartButtons(p) { document.querySelectorAll("#ranges button").forEach(x => x.classList.toggle("on", x.dataset.r === p)); }
   function applyLimit(id) {
     const sel = document.querySelector(`select.limit[data-t="${id}"]`), n = sel ? +sel.value : 0;
     const trs = [...document.querySelectorAll(`#${id} tbody tr`)].filter(tr => !tr.classList.contains("total") && !tr.classList.contains("cash"));
@@ -437,13 +439,11 @@
 
   /* ───────── 추세 ───────── */
   function sliceRange(tl) {
-    const end = tl.dates[tl.dates.length - 1], d = new Date(end + "T00:00:00");
-    let start = tl.dates[0];
-    const back = { "1M": 1, "3M": 3, "6M": 6 }[S.range];
-    if (back) { d.setMonth(d.getMonth() - back); start = d.toISOString().slice(0, 10); }
-    if (S.range === "YTD") start = end.slice(0, 4) + "-01-01";
-    const i0 = Math.max(0, tl.dates.findIndex(x => x >= start));
-    const cut = a => a.slice(i0);
+    // 위쪽 '기간' 필터(S.pFrom~S.pTo)를 표와 그래프가 함께 씀
+    const n = tl.dates.length, from = S.pFrom || tl.dates[0], to = S.pTo || tl.dates[n - 1];
+    let i0 = tl.dates.findIndex(x => x >= from); if (i0 < 0) i0 = n - 1;
+    let i1 = n - 1; while (i1 > i0 && tl.dates[i1] > to) i1--;
+    const cut = a => a.slice(i0, i1 + 1);
     const o = { dates: cut(tl.dates), w: {}, r: {} };
     ["asset", "value", "cost", "unreal", "realCum", "dep", "ret"].forEach(k => o[k] = cut(tl[k]));
     S.keys.forEach(k => { o.w[k] = cut(tl.w[k]); o.r[k] = cut(tl.r[k]); });
@@ -472,14 +472,15 @@
     Charts.line($("#cDD"), { dates: t.dates, series: [{ name: "누적 수익률", color: "var(--s1)", values: t.ret }, { name: "고점 대비 하락", color: "var(--s2)", values: dd }], fmt: v => Math.round(v) + "%", tipFmt: v => (v > 0 ? "+" : "") + v.toFixed(1) + "%", marker: mk });
     // 월별
     const start = t.dates[0].slice(0, 7);
-    const months = Object.keys(R.flows).filter(m => m >= start).sort();
+    const endM = t.dates[t.dates.length - 1].slice(0, 7);
+    const months = Object.keys(R.flows).filter(m => m >= start && m <= endM).sort();
     Charts.bars($("#cReal"), {
       labels: months.map(mLabel), series: [{ name: "실현손익", color: "var(--up)", values: months.map(m => R.flows[m].real) }],
       signColor: { pos: "var(--up)", neg: "var(--down)" }, fmt: (v, full) => full ? signed(v) : short(v),
       extra: i => { const f = R.flows[months[i]]; return `<div>매도 손익<span>${signed(f.real - f.div - f.int)}</span></div><div>배당<span>${signed(f.div)}</span></div>${f.int ? `<div>이자<span>${signed(f.int)}</span></div>` : ""}`; }
     });
     Charts.bars($("#cFlow"), { labels: months.map(mLabel), series: [{ name: "매수", color: "var(--up)", values: months.map(m => R.flows[m].buy) }, { name: "매도", color: "var(--down)", values: months.map(m => R.flows[m].sell) }], fmt: (v, full) => full ? won(v) : short(v) });
-    const tr = R.trades.filter(x => x.date >= t.dates[0]);
+    const tr = R.trades.filter(x => x.date >= t.dates[0] && x.date <= t.dates[t.dates.length - 1]);
     Charts.bars($("#cTrades"), {
       labels: tr.map(x => `${+x.date.slice(5, 7)}.${+x.date.slice(8)} ${S.inst[x.key].name}`), series: [{ name: "손익", color: "var(--up)", values: tr.map(x => x.pnl) }],
       signColor: { pos: "var(--up)", neg: "var(--down)" }, fmt: (v, full) => full ? signed(v) : short(v), extra: i => `<div>수익률<span>${pct(tr[i].ret)}</span></div>`
@@ -655,11 +656,13 @@
   $("#pw").addEventListener("keydown", ev => { if (ev.key === "Enter") submitPw(); });
   ["#fMarket", "#fTicker", "#fSide"].forEach(s => $(s).addEventListener("change", renderT1));
   document.querySelectorAll("select.limit").forEach(s => s.addEventListener("change", () => applyLimit(s.dataset.t)));
-  const periodChanged = () => { if (!S.base) return; renderT1(); renderT2(); };
+  const periodChanged = () => { if (!S.base) return; renderT1(); renderT2(); renderCharts(S.scenario ? simulate(true) : S.base); };
   $("#pRanges").addEventListener("click", ev => { const b = ev.target.closest("button"); if (!b) return; setPeriod(b.dataset.p); periodChanged(); });
   ["#pFrom", "#pTo"].forEach(s => $(s).addEventListener("change", () => {
     S.pFrom = $("#pFrom").value; S.pTo = $("#pTo").value;
-    document.querySelectorAll("#pRanges button").forEach(x => x.classList.toggle("on", !S.pFrom && !S.pTo && x.dataset.p === "ALL"));
+    const all = !S.pFrom && !S.pTo;
+    document.querySelectorAll("#pRanges button").forEach(x => x.classList.toggle("on", all && x.dataset.p === "ALL"));
+    syncChartButtons(all ? "ALL" : "");
     periodChanged();
   }));
   $("#t3").addEventListener("input", refreshT3Derived);
@@ -676,8 +679,7 @@
   });
   $("#ranges").addEventListener("click", ev => {
     const b = ev.target.closest("button"); if (!b) return;
-    S.range = b.dataset.r; document.querySelectorAll("#ranges button").forEach(x => x.classList.toggle("on", x === b));
-    renderCharts(S.scenario ? simulate(true) : S.base);
+    setPeriod(b.dataset.r); periodChanged();   // 그래프 버튼도 위쪽 기간 필터와 같이 움직임
   });
   let rz; window.addEventListener("resize", () => { clearTimeout(rz); rz = setTimeout(() => S.base && renderCharts(S.scenario ? simulate(true) : S.base), 200); });
   window.addEventListener("scroll", () => Charts.hideTip(), { passive: true });

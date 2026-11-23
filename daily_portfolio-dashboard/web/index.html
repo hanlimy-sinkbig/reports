@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="robots" content="noindex">
 <title>포트폴리오 대시보드</title>
-<link rel="stylesheet" href="style.css?v=20261121y">
+<link rel="stylesheet" href="style.css?v=20261123a">
 </head>
 <body>
 <header class="top">
@@ -14,14 +14,14 @@
     <p class="sub" id="asof">매매일지 CSV를 불러오면 분석이 시작됩니다.</p>
   </div>
   <div class="loader">
-    <label class="btn primary">매매일지 CSV 열기<input type="file" id="file" accept=".csv,text/csv" hidden></label>
+    <label class="btn primary">CSV 열기 (매매일지·목표가격)<input type="file" id="file" accept=".csv,text/csv" multiple hidden></label>
     <button class="btn" id="btnSample">샘플로 보기</button>
     <span class="pwok" id="pwOk" hidden title="누르면 비밀번호를 다시 입력할 수 있습니다"></span>
     <span class="pwbox" id="pwBox" hidden><input type="password" id="pw" placeholder="대시보드 비밀번호" autocomplete="current-password"><button class="btn primary" id="btnPw">열기</button></span>
     <button class="btn ghost" id="btnForget" hidden>이 기기에서 지우기</button>
   </div>
 </header>
-<p class="privacy">🔒 매매일지는 맥에서 암호화되어 올라오고, 이 브라우저 안에서 비밀번호로 풀어 자동으로 불러옵니다(비밀번호는 이 기기에만 기억). 직접 고른 CSV도 서버로 전송되지 않습니다. 아이패드는 <b>파일 앱 → Google Drive → 주식투자</b>에서, 맥은 Google Drive 데스크톱 폴더에서 고르세요.</p>
+<p class="privacy">🔒 매매일지(journal.csv)와 목표가격(targets.csv)은 암호화되어 올라오고, 이 브라우저 안에서 비밀번호로 풀어 함께 자동으로 불러옵니다(비밀번호는 이 기기에만 기억). 직접 고른 CSV도 서버로 전송되지 않습니다. <b>CSV 열기</b>에서는 두 파일을 한꺼번에 고르거나 하나만 골라도 됩니다.</p>
 <div id="warn" class="warn" hidden></div>
 
 <main id="app" hidden>
@@ -110,7 +110,7 @@
   </section>
 </main>
 <footer class="foot" id="foot"></footer>
-<script src="charts.js?v=20261121y"></script>
-<script src="app.js?v=20261121y"></script>
+<script src="charts.js?v=20261123a"></script>
+<script src="app.js?v=20261123a"></script>
 </body>
 </html>

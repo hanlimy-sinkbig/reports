@@ -948,7 +948,7 @@
   const safeGet = () => { try { return localStorage.getItem(LS_KEY); } catch (e) { return null; } };
   const safeSet = v => { try { v == null ? localStorage.removeItem(LS_KEY) : localStorage.setItem(LS_KEY, v); } catch (e) { } };
 
-  /* ───────── 암호화 매매일지 자동 불러오기 ───────── */
+  /* ───────── 암호화 매매일지·목표가격 자동 불러오기 ───────── */
   const b64d = s => Uint8Array.from(atob(s), c => c.charCodeAt(0));
   const pwGet = () => { try { return localStorage.getItem(PW_KEY); } catch (e) { return null; } };
   const pwSet = v => { try { v == null ? localStorage.removeItem(PW_KEY) : localStorage.setItem(PW_KEY, v); } catch (e) { } };
@@ -977,8 +977,9 @@
     }
     pwSet(pw); safeSet(text); showPw(false); showWarn([]);
     await start(text, true);
-    $("#asof").textContent = `자동 불러옴 (맥 동기화 ${S.enc.updated || "?"}) · ` + $("#asof").textContent;
-    const ok = $("#pwOk"); ok.textContent = `🔓 자동 불러오기 켜짐 · 동기화 ${S.enc.updated || "?"}`; ok.hidden = false;
+    const tg = S.tgtEnc ? (S.tgtWarn ? "목표가격 풀기 실패" : `목표가격 ${S.tgtEnc.updated || "?"}`) : "목표가격 파일 없음";
+    $("#asof").textContent = `자동 불러옴 (매매일지 ${S.enc.updated || "?"} · ${tg}) · ` + $("#asof").textContent;
+    const ok = $("#pwOk"); ok.textContent = `🔓 자동 불러오기 켜짐 · 매매일지 ${S.enc.updated || "?"} · ${tg}`; ok.hidden = false;
   }
   async function tryAuto() {
     try {
@@ -995,9 +996,28 @@
   }
 
   /* ───────── 이벤트 ───────── */
+  // 첫 줄(열 이름)로 파일 종류 구분: 날짜·매매 열이 있으면 매매일지, 티커·손절가·목표가만 있으면 목표가격
+  function csvKind(text) {
+    const head = (parseCSV(text)[0] || []).map(h => h.trim());
+    if (head.includes("날짜") && head.includes("매매")) return "journal";
+    if (head.includes("티커") && (head.includes("손절가") || head.includes("목표가"))) return "targets";
+    return "";
+  }
   $("#file").addEventListener("change", async ev => {
-    const f = ev.target.files[0]; if (!f) return;
-    const text = decode(await f.arrayBuffer()); safeSet(text); await start(text, true); $("#btnForget").hidden = false; ev.target.value = "";
+    const files = [...ev.target.files]; ev.target.value = ""; if (!files.length) return;
+    let journal = null, targets = null; const bad = [];
+    for (const f of files) {
+      const text = decode(await f.arrayBuffer()), kind = csvKind(text);
+      if (kind === "journal") journal = text; else if (kind === "targets") targets = { text, name: f.name }; else bad.push(f.name);
+    }
+    if (targets) { loadTargetsText(targets.text, `${targets.name} 직접 열기`); S.tgtWarn = ""; }
+    const text = journal || safeGet();
+    if (!text) { showWarn([...bad.map(n => `${n}: 매매일지·목표가격 파일이 아닙니다.`), "매매일지 CSV(journal.csv)를 함께 골라 주세요."]); return; }
+    if (journal) safeSet(journal);
+    await start(text, true); $("#btnForget").hidden = false;
+    const got = [journal ? "매매일지" : "", targets ? "목표가격" : ""].filter(Boolean).join("·");
+    $("#asof").textContent = `직접 연 파일: ${got || "없음"}${journal ? "" : " (매매일지는 이전에 불러온 것)"} · ` + $("#asof").textContent;
+    if (bad.length) showWarn([...S.warnings, ...bad.map(n => `${n}: 매매일지·목표가격 파일이 아니라 건너뛰었습니다.`)]);
   });
   $("#btnSample").addEventListener("click", async () => {
     const r = await fetch("sample.csv", { cache: "no-store" }); await start(decode(await r.arrayBuffer()), false);

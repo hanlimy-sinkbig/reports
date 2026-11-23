@@ -1,0 +1,133 @@
+# 구글 드라이브 '주식투자' 폴더의 목표가격.csv를 암호화해 journal 브랜치의 targets.enc.json으로 올립니다.
+# 맥이 꺼져 있어도 30분마다 돌고, Actions 탭에서 'Run workflow'로 바로 돌릴 수도 있습니다.
+# 필요한 Secrets: GDRIVE_SA_KEY(서비스 계정 JSON), JOURNAL_PASSWORD(대시보드 비밀번호)
+name: targets-sync
+
+on:
+  schedule:
+    - cron: "7,37 * * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: journal-branch
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: journal
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - run: pip install google-auth requests
+
+      - name: 목표가격.csv 받아서 암호화
+        env:
+          GDRIVE_SA_KEY: ${{ secrets.GDRIVE_SA_KEY }}
+          JOURNAL_PASSWORD: ${{ secrets.JOURNAL_PASSWORD }}
+          FOLDER_ID: 1bfqi7hCXnXMUYezg_DV9BmWRLMUFrylc
+          FILE_NAME: 목표가격.csv
+        run: |
+          python - <<'EOF'
+          import base64, gzip, hashlib, hmac, json, os, struct, sys
+          from datetime import datetime, timedelta, timezone
+          from google.oauth2 import service_account
+          from google.auth.transport.requests import AuthorizedSession
+
+          OUT = "targets.enc.json"
+          ITER = 200000
+          pw = os.environ["JOURNAL_PASSWORD"].encode()
+
+          def keys(salt, it):
+              bits = hashlib.pbkdf2_hmac("sha256", pw, salt, it, 64)
+              return bits[:32], bits[32:]
+
+          def stream(ek, nonce, data):
+              out = bytearray(len(data))
+              for i in range(0, (len(data) + 31) // 32):
+                  k = hmac.new(ek, nonce + struct.pack(">I", i), hashlib.sha256).digest()
+                  for b in range(32):
+                      j = i * 32 + b
+                      if j >= len(data):
+                          break
+                      out[j] = data[j] ^ k[b]
+              return bytes(out)
+
+          def decrypt(j):
+              salt, nonce = base64.b64decode(j["salt"]), base64.b64decode(j["nonce"])
+              ct, tag = base64.b64decode(j["ct"]), base64.b64decode(j["tag"])
+              ek, mk = keys(salt, j["iter"])
+              if not hmac.compare_digest(hmac.new(mk, nonce + ct, hashlib.sha256).digest(), tag):
+                  sys.exit("기존 targets.enc.json을 풀 수 없습니다. JOURNAL_PASSWORD가 대시보드 비밀번호와 같은지 확인하세요.")
+              pt = stream(ek, nonce, ct)
+              return gzip.decompress(pt) if j.get("gz") else pt
+
+          def encrypt(pt):
+              salt, nonce = os.urandom(16), os.urandom(16)
+              ek, mk = keys(salt, ITER)
+              ct = stream(ek, nonce, gzip.compress(pt, mtime=0))
+              tag = hmac.new(mk, nonce + ct, hashlib.sha256).digest()
+              b64 = lambda x: base64.b64encode(x).decode()
+              now = datetime.now(timezone(timedelta(hours=9))).strftime("%Y-%m-%d %H:%M")
+              return {"v": 1, "kdf": "pbkdf2-sha256", "iter": ITER, "gz": 1,
+                      "salt": b64(salt), "nonce": b64(nonce), "ct": b64(ct), "tag": b64(tag),
+                      "updated": now}
+
+          # 1) 기존 파일을 먼저 풀어 봅니다 (비밀번호·방식이 맞는지 검사)
+          old = None
+          if os.path.exists(OUT):
+              old = decrypt(json.load(open(OUT, encoding="utf-8")))
+
+          # 2) 드라이브 폴더에서 이름으로 최신 목표가격.csv를 찾습니다
+          cred = service_account.Credentials.from_service_account_info(
+              json.loads(os.environ["GDRIVE_SA_KEY"]),
+              scopes=["https://www.googleapis.com/auth/drive.readonly"])
+          s = AuthorizedSession(cred)
+          q = "'%s' in parents and name = '%s' and trashed = false" % (os.environ["FOLDER_ID"], os.environ["FILE_NAME"])
+          r = s.get("https://www.googleapis.com/drive/v3/files",
+                    params={"q": q, "orderBy": "modifiedTime desc", "fields": "files(id,name,modifiedTime)"})
+          r.raise_for_status()
+          files = r.json().get("files", [])
+          if not files:
+              sys.exit("드라이브 폴더에서 목표가격.csv를 찾지 못했습니다. 서비스 계정에 폴더가 공유됐는지 확인하세요.")
+          f = files[0]
+          print("사용할 파일:", f["name"], f["modifiedTime"], "(같은 이름 %d개 중 최신)" % len(files))
+          r = s.get("https://www.googleapis.com/drive/v3/files/%s" % f["id"], params={"alt": "media"})
+          r.raise_for_status()
+          new = r.content
+          if new.startswith(b"\xef\xbb\xbf"):
+              new = new[3:]
+          if b"\xec\x86\x90\xec\xa0\x88\xea\xb0\x80" not in new.split(b"\n")[0]:  # '손절가' 열 확인
+              sys.exit("받은 파일 첫 줄에 '손절가' 열이 없습니다. 파일 형식을 확인하세요.")
+
+          # 3) 내용이 같으면 올리지 않습니다
+          strip = lambda b: b[3:] if b and b.startswith(b"\xef\xbb\xbf") else b
+          norm = lambda b: b.replace(b"\r\n", b"\n").strip()
+          if old is not None and norm(strip(old)) == norm(new):
+              print("변경 없음 - 건너뜁니다.")
+              sys.exit(0)
+
+          json.dump(encrypt(new), open(OUT, "w", encoding="utf-8"), ensure_ascii=False, separators=(",", ":"))
+          print("targets.enc.json 갱신")
+          EOF
+
+      - name: journal 브랜치에 올리기
+        run: |
+          if git diff --quiet -- targets.enc.json; then exit 0; fi
+          git config user.name "targets-sync"
+          git config user.email "actions@users.noreply.github.com"
+          git add targets.enc.json
+          git commit -m "목표가격 동기화 (드라이브)"
+          for i in 1 2 3; do
+            git pull --rebase origin journal && git push origin HEAD:journal && exit 0
+            sleep 5
+          done
+          exit 1

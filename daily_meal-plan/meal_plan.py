@@ -67,10 +67,14 @@ def in_pool(d: dict, theme: str, month: int) -> bool:
     return theme in d["tags"]
 
 
+LEVEL_W = {"쉬움": 1.0, "보통": 0.6, "어려움": 0.3}   # 쉬운 메뉴가 더 자주 나오게
+
+
 def weight(d: dict, month: int) -> float:
+    w = LEVEL_W.get(d["lv"], 1.0)
     if not d["season"]:
-        return 1.0
-    return 3.0 if month in d["season"] else 0.25
+        return w
+    return w * (3.0 if month in d["season"] else 0.1)
 
 
 HIST = L.History()          # 식사 기록 (main 에서 채움). 비어 있으면 기록 반영 없이 짠다.

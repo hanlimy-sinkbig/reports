@@ -301,7 +301,11 @@ section{margin-top:24px}h2{font-size:19px;margin:0 0 12px}h2 .num{color:var(--ac
 .th small{color:var(--text-muted);margin-left:3px;font-size:11.5px}
 .th:disabled{opacity:.35;cursor:default}
 .allh{display:flex;align-items:center}.allh .muted{font-weight:400;margin-left:8px}
-.allh .tog{margin-left:auto;border:1px solid var(--border);background:var(--surface-1);color:var(--accent);font-size:13px;font-weight:600;border-radius:999px;padding:5px 12px;cursor:pointer;font-family:inherit}
+.allcard{padding:0;overflow:hidden}
+.alltog{display:block;width:100%;border:none;background:none;color:var(--accent);font-size:15px;font-weight:600;padding:11px 14px;cursor:pointer;font-family:inherit;text-align:center}
+.alltog:hover{background:var(--accent-soft)}
+#allbody{padding:4px 14px 14px;border-top:1px solid var(--border)}
+#allbody .allopt{margin-top:10px}
 .allopt{display:flex;gap:12px;align-items:center;flex-wrap:wrap;margin:0 0 8px;font-size:13.5px;color:var(--text-secondary)}
 .allopt select{font-family:inherit;font-size:13.5px;padding:4px 6px;border-radius:8px;border:1px solid var(--border);background:var(--surface-1);color:var(--text-primary)}
 .allhead,.row{display:grid;grid-template-columns:minmax(120px,1.3fr) 54px 44px 62px 92px minmax(0,3fr);gap:8px;align-items:center}
@@ -379,12 +383,13 @@ __DEMO__
 <section id="s1"><h2><span class="num">①</span>테마</h2>
  <div class="card"><div class="themes" id="themes"></div></div></section>
 
-<section id="sall"><h2 class="allh"><span class="num">②</span>전체 음식 <span class="muted" id="allcnt"></span><button class="tog" id="alltog" aria-expanded="false">펼치기 ▾</button></h2>
- <div class="card" id="allbody" hidden>
+<section id="sall"><h2 class="allh"><span class="num">②</span>전체 음식 <span class="muted" id="allcnt"></span></h2>
+ <div class="card allcard"><button class="alltog" id="alltog" aria-expanded="false">펼치기 ▾</button>
+ <div id="allbody" hidden>
   <div class="allopt"><label><input type="checkbox" id="allsel"> 고른 테마에 맞는 메뉴만</label>
    <select id="allsort"><option value="name">가나다순</option><option value="lv">쉬운 순</option><option value="time">빠른 순</option></select></div>
   <div class="allhead"><span>메뉴</span><span>난이도</span><span>시간</span><span>방법</span><span>제철</span><span>테마</span></div>
-  <div id="alllist"></div></div></section>
+  <div id="alllist"></div></div></div></section>
 
 <section id="s2"><h2><span class="num">③</span>식단 달력</h2>
  <div class="card">
@@ -540,7 +545,7 @@ function setV(v){vsel=v;try{localStorage.setItem('meal-variant',String(v));}catc
 document.getElementById('regen').onclick=()=>setV((vsel+1)%NV);
 document.getElementById('vreset').onclick=()=>setV(0);
 document.getElementById('alltog').onclick=()=>{const b=document.getElementById('allbody'),t=document.getElementById('alltog');
- b.hidden=!b.hidden;t.textContent=b.hidden?'펼치기 ▾':'접기 ▴';t.setAttribute('aria-expanded',String(!b.hidden));renderAll();};
+ b.hidden=!b.hidden;t.textContent=b.hidden?'펼치기 ▾':'접기 ▴';if(b.hidden)document.getElementById('sall').scrollIntoView({block:'nearest'});t.setAttribute('aria-expanded',String(!b.hidden));renderAll();};
 renderLog();renderThemes();renderV();renderCal();renderAll();
 </script></body></html>
 """

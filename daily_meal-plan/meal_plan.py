@@ -314,7 +314,11 @@ header{display:flex;justify-content:space-between;align-items:flex-start;gap:12p
 .dish{display:flex;align-items:flex-start;gap:3px;width:100%;text-align:left;border:1px solid var(--border);background:var(--surface-0);color:var(--text-primary);
  border-radius:7px;padding:3px 5px;font-size:12px;line-height:1.3;cursor:pointer;font-family:inherit;word-break:keep-all}
 .dish:hover{border-color:var(--accent)}
-.dish .m{flex:none}.dish.m0{border-left:3px solid var(--home)}.dish.m1{border-left:3px solid var(--kit)}.dish.m2{border-left:3px solid var(--dlv)}
+.dish .m{flex:none}.dish .nm{flex:1;min-width:0}
+.lv{flex:none;margin-left:auto;font-size:10.5px;font-weight:600;line-height:1;padding:3px 5px;border-radius:999px;white-space:nowrap;align-self:center}
+.lv0{background:#e3f4ea;color:#1f7a49}.lv1{background:#fdf0d5;color:#9a6200}.lv2{background:#fde2df;color:#b3261e}
+@media (prefers-color-scheme: dark){.lv0{background:#1d3a2a;color:#7fd3a4}.lv1{background:#3d2f12;color:#f0c46a}.lv2{background:#45201d;color:#ff9b91}}
+.dish{align-items:center}.dish.m0{border-left:3px solid var(--home)}.dish.m1{border-left:3px solid var(--kit)}.dish.m2{border-left:3px solid var(--dlv)}
 .empty{font-size:12px;color:var(--text-muted);padding:4px}
 @media (max-width:720px){
  .cal{grid-template-columns:1fr;gap:6px}.wd,.day.blank{display:none}
@@ -382,7 +386,10 @@ function renderThemes(){const mon=+months[mi].slice(5);
  const all=[{k:'전체',e:'🍽️'}].concat(D.themes);
  document.getElementById('themes').innerHTML=all.map(t=>{const n=D.dishes.filter(d=>inTheme(d,t.k,mon)).length;
   return `<button class="th${t.k===theme?' on':''}" data-t="${esc(t.k)}">${t.e} ${t.k==='전체'?'전체':'#'+esc(t.k)}<small>${n}</small></button>`}).join('');}
-function dishBtn(day,k,[i,m]){const d=D.dishes[i];return `<button class="dish m${m}" data-i="${i}" data-m="${m}" title="${MODE[m]}"><span class="m">${EMO[m]}</span><span>${esc(d.n)}</span></button>`;}
+const LV={'쉬움':[0,'쉬움'],'보통':[1,'중간'],'어려움':[2,'어려움']};
+const lvTag=d=>{const [c,t]=LV[d.lv]||LV['쉬움'];return `<span class="lv lv${c}">${t}</span>`;};
+// 요리하는 메뉴(집밥·밀키트)만 오른쪽에 난이도, 배달은 표시 안 함
+function dishBtn(day,k,[i,m]){const d=D.dishes[i];return `<button class="dish m${m}" data-i="${i}" data-m="${m}" title="${MODE[m]}"><span class="m">${EMO[m]}</span><span class="nm">${esc(d.n)}</span>${m===2?'':(m===1?'<span class="lv lv0">쉬움</span>':lvTag(d))}</button>`;}
 function renderCal(){const ym=months[mi],[y,mo]=ym.split('-').map(Number);
  document.getElementById('mtitle').textContent=`${y}년 ${mo}월`;
  document.getElementById('prev').disabled=mi===0;document.getElementById('next').disabled=mi===months.length-1;
@@ -412,7 +419,7 @@ function renderLog(){const el=document.getElementById('logbox'),S=D.logsum;
  if(S.total)p.push(`기록 ${S.total}개 중 추천 메뉴와 연결된 것 ${S.matched}개`);
  el.innerHTML='<div class="logbox">'+p.join('<br>')+'</div>';}
 function linkBtns(list){return '<div class="btns">'+list.map(([t,u])=>`<a href="${u}" target="_blank" rel="noopener">${esc(t)}</a>`).join('')+'</div>';}
-function blkHome(d,main){return `<div class="blk${main?' main':''}"><h4>🍳 레시피 <span class="muted">${d.time}분 · ${esc(d.lv)}</span></h4>
+function blkHome(d,main){return `<div class="blk${main?' main':''}"><h4>🍳 레시피 <span class="muted">${d.time}분 · 난이도 ${(LV[d.lv]||LV['쉬움'])[1]}</span></h4>
  <div class="ing"><b>재료</b> ${esc(d.ing)}</div><ol>${d.steps.map(s=>`<li>${esc(s)}</li>`).join('')}</ol></div>`;}
 function blkKit(d,main){const kw=d.n+' 밀키트';return `<div class="blk${main?' main':''}"><h4>📦 밀키트 주문 방법</h4>
  ${linkBtns([['쿠팡에서 찾기','https://www.coupang.com/np/search?q='+q(kw)],['컬리에서 찾기','https://www.kurly.com/search?sword='+q(kw)],['네이버쇼핑 비교','https://search.shopping.naver.com/search/all?query='+q(kw)]])}
@@ -546,7 +553,7 @@ def render_pdf(d: dict, now: dt.datetime, path: Path) -> Path:
         today_items = plan[now.day - 1] if now.day - 1 < len(plan) else []
         for i, m in today_items:
             dd = dishes[i]
-            t(f"■ {dd['n']}  —  {['집밥', '밀키트', '배달'][m]} · {dd['time']}분 · {dd['lv']}", 10.5, ACC, bold=True, lh=0.02)
+            t(f"■ {dd['n']}  —  {['집밥', '밀키트', '배달'][m]} · {dd['time']}분 · 난이도 {({'보통': '중간'}).get(dd['lv'], dd['lv'])}", 10.5, ACC, bold=True, lh=0.02)
             if m == 2 and dd["dl"]:
                 ch = ", ".join(dd["dl"]["chains"]) or "동네 가게"
                 t(f"배달: {ch} · 배달앱에서 '{dd['dl']['kw']}' 검색 (아래는 집에서 만들 때 레시피)", 8, SUB, ind=0.01)

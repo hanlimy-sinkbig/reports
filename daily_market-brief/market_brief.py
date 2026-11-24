@@ -230,7 +230,52 @@ class LiveSource:
             rest = [info(t)[0] for t in todo if t not in idx_names]
             if rest:
                 NR.fail(f"시세·종목 {len(rest)}개({', '.join(rest[:5])}{'…' if len(rest) > 5 else ''})")
+        self._fill_kr_last_bar(out)
         return out
+
+    def _fill_kr_last_bar(self, out: dict[str, pd.DataFrame]) -> None:
+        """야후가 한국 종목의 '전날 일봉'을 다음 날 아침까지 비워 두는 문제 보정.
+        일봉 마지막 날짜가 야후 실시간 시세(regularMarketTime)의 날짜보다 오래됐고
+        그날 장이 끝났으면(15:40 KST 이후), 실시간 시세 값으로 그 하루를 붙인다."""
+        from concurrent.futures import ThreadPoolExecutor
+        kr = [t for t in out if t.endswith((".KS", ".KQ")) or t in ("^KS11", "^KQ11")]
+        if not kr:
+            return
+        now = dt.datetime.now(KST)
+
+        def meta(t):
+            try:
+                tk = self.yf.Ticker(t)
+                tk.history(period="5d", interval="1d", auto_adjust=False)
+                return t, (tk.history_metadata or {})
+            except Exception:  # noqa: BLE001
+                return t, {}
+
+        with ThreadPoolExecutor(max_workers=6) as ex:
+            metas = dict(ex.map(meta, kr))
+        filled = []
+        for t in kr:
+            m, df = metas.get(t) or {}, out[t]
+            ts, px = m.get("regularMarketTime"), m.get("regularMarketPrice")
+            if not ts or px is None:
+                continue
+            day = dt.datetime.fromtimestamp(int(ts), KST)
+            d = pd.Timestamp(day.date())
+            if d <= df.index[-1]:
+                continue                                   # 이미 들어 있음
+            if day.date() == now.date() and (now.hour, now.minute) < (15, 40):
+                continue                                   # 장중 미완성 봉은 붙이지 않음
+            prev = float(df["Close"].iloc[-1])
+            px = float(px)
+            hi = float(m.get("regularMarketDayHigh") or max(px, prev))
+            lo = float(m.get("regularMarketDayLow") or min(px, prev))
+            out[t] = pd.concat([df, pd.DataFrame(
+                {"Open": [prev], "High": [max(hi, px, prev)], "Low": [min(lo, px, prev)],
+                 "Close": [px], "Volume": [float(m.get("regularMarketVolume") or 0)]},
+                index=[d])])                                # 시가는 제공되지 않아 전일 종가로 대신
+            filled.append(f"{t}→{d:%m/%d}")
+        if filled:
+            log(f"한국 시세 전날 봉 보정 {len(filled)}개: {', '.join(filled[:5])}{'…' if len(filled) > 5 else ''}")
 
     def market_caps(self, tickers: list[str]) -> dict[str, float]:
         def one(t):

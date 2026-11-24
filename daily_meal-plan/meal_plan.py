@@ -300,12 +300,9 @@ section{margin-top:24px}h2{font-size:19px;margin:0 0 12px}h2 .num{color:var(--ac
 .th{border:1px solid var(--border);background:var(--surface-1);color:var(--text-primary);border-radius:999px;padding:7px 12px;font-size:14px;cursor:pointer;font-family:inherit}
 .th small{color:var(--text-muted);margin-left:3px;font-size:11.5px}
 .th:disabled{opacity:.35;cursor:default}
-details.all>summary{list-style:none;cursor:pointer;display:flex;align-items:center;gap:8px;flex-wrap:wrap}
-details.all>summary::-webkit-details-marker{display:none}
-details.all .h2{font-size:19px;font-weight:700}
-details.all .tog{margin-left:auto;font-size:13px;color:var(--accent);font-weight:600}
-details.all .tog::after{content:'펼치기 ▾'}details.all[open] .tog::after{content:'접기 ▴'}
-.allopt{display:flex;gap:12px;align-items:center;flex-wrap:wrap;margin:12px 0 8px;font-size:13.5px;color:var(--text-secondary)}
+.allh{display:flex;align-items:center}.allh .muted{font-weight:400;margin-left:8px}
+.allh .tog{margin-left:auto;border:1px solid var(--border);background:var(--surface-1);color:var(--accent);font-size:13px;font-weight:600;border-radius:999px;padding:5px 12px;cursor:pointer;font-family:inherit}
+.allopt{display:flex;gap:12px;align-items:center;flex-wrap:wrap;margin:0 0 8px;font-size:13.5px;color:var(--text-secondary)}
 .allopt select{font-family:inherit;font-size:13.5px;padding:4px 6px;border-radius:8px;border:1px solid var(--border);background:var(--surface-1);color:var(--text-primary)}
 .allhead,.row{display:grid;grid-template-columns:minmax(120px,1.3fr) 54px 44px 62px 92px minmax(0,3fr);gap:8px;align-items:center}
 .allhead{font-size:11.5px;color:var(--text-muted);padding:4px 8px;border-bottom:1px solid var(--border)}
@@ -382,11 +379,12 @@ __DEMO__
 <section id="s1"><h2><span class="num">①</span>테마</h2>
  <div class="card"><div class="themes" id="themes"></div></div></section>
 
-<section id="sall"><details class="card all" id="alld"><summary><span class="h2"><span class="num">②</span>전체 음식</span> <span class="muted" id="allcnt"></span><span class="tog"></span></summary>
+<section id="sall"><h2 class="allh"><span class="num">②</span>전체 음식 <span class="muted" id="allcnt"></span><button class="tog" id="alltog" aria-expanded="false">펼치기 ▾</button></h2>
+ <div class="card" id="allbody" hidden>
   <div class="allopt"><label><input type="checkbox" id="allsel"> 고른 테마에 맞는 메뉴만</label>
    <select id="allsort"><option value="name">가나다순</option><option value="lv">쉬운 순</option><option value="time">빠른 순</option></select></div>
   <div class="allhead"><span>메뉴</span><span>난이도</span><span>시간</span><span>방법</span><span>제철</span><span>테마</span></div>
-  <div id="alllist"></div></details></section>
+  <div id="alllist"></div></div></section>
 
 <section id="s2"><h2><span class="num">③</span>식단 달력</h2>
  <div class="card">
@@ -454,7 +452,7 @@ function renderAll(){const mon=+months[mi].slice(5),only=document.getElementById
  list.sort((a,b)=>{const x=D.dishes[a],y=D.dishes[b];
   return how==='lv'?(LVO[x.lv]-LVO[y.lv])||(x.time-y.time):how==='time'?(x.time-y.time):x.n.localeCompare(y.n,'ko');});
  document.getElementById('allcnt').textContent=only?`${list.length} / ${D.dishes.length}가지`:`${D.dishes.length}가지`;
- if(!document.getElementById('alld').open)return;
+ if(document.getElementById('allbody').hidden)return;
  document.getElementById('alllist').innerHTML=list.map(i=>{const d=D.dishes[i];
   const how=['🍳',d.kit?'📦':'',d.dl?'🛵':''].join('');
   const ss=d.s.length?'제철 '+d.s.join('·')+'월':'사계절';
@@ -528,7 +526,7 @@ document.addEventListener('click',e=>{const t=e.target.closest('.th');if(t){cons
   sel=k==='전체'?[]:(sel.includes(k)?sel.filter(x=>x!==k):[...sel,k]);renderThemes();renderCal();renderAll();return;}
  const b=e.target.closest('.dish');if(b){openDish(+b.dataset.i,+b.dataset.m);return;}
  const r=e.target.closest('.row');if(r){openDish(+r.dataset.i,0);return;}});
-['alld:toggle','allsel:change','allsort:change'].forEach(x=>{const [id,ev]=x.split(':');document.getElementById(id).addEventListener(ev,renderAll);});
+['allsel:change','allsort:change'].forEach(x=>{const [id,ev]=x.split(':');document.getElementById(id).addEventListener(ev,renderAll);});
 const dlg=document.getElementById('dlg');
 document.getElementById('dx').onclick=()=>dlg.close?dlg.close():dlg.removeAttribute('open');
 dlg.addEventListener('click',e=>{if(e.target===dlg)dlg.close();});
@@ -541,6 +539,8 @@ function setV(v){vsel=v;try{localStorage.setItem('meal-variant',String(v));}catc
  const c=document.getElementById('cal');c.classList.remove('flash');void c.offsetWidth;c.classList.add('flash');}
 document.getElementById('regen').onclick=()=>setV((vsel+1)%NV);
 document.getElementById('vreset').onclick=()=>setV(0);
+document.getElementById('alltog').onclick=()=>{const b=document.getElementById('allbody'),t=document.getElementById('alltog');
+ b.hidden=!b.hidden;t.textContent=b.hidden?'펼치기 ▾':'접기 ▴';t.setAttribute('aria-expanded',String(!b.hidden));renderAll();};
 renderLog();renderThemes();renderV();renderCal();renderAll();
 </script></body></html>
 """

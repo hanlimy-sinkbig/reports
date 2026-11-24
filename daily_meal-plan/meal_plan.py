@@ -85,13 +85,13 @@ def pick(rng: random.Random, cands: list[int], month: int, avoid: set[int], mult
     return rng.choices(pool, weights=ws, k=1)[0]
 
 
-def plan_month(year: int, month: int, theme: str) -> list[list[list[int]]]:
+def plan_month(year: int, month: int, theme: str, variant: int = 0) -> list[list[list[int]]]:
     """하루마다 [[메뉴번호, 방법], ...] 3개. 방법 0=집밥 1=밀키트 2=배달."""
     dishes = M.DISHES
     idx = [i for i, d in enumerate(dishes) if in_pool(d, theme, month)]
     if not idx:
         return []
-    rng = random.Random(f"meal|{year}-{month:02d}|{theme}|{len(dishes)}")
+    rng = random.Random(f"meal|{year}-{month:02d}|{theme}|{len(dishes)}" + (f"|v{variant}" if variant else ""))
     per = min(3, len(idx))
     keep_days = max(0, min(3, len(idx) // per - 1))       # 메뉴가 적은 테마는 반복 허용
     recent: list[list[int]] = []
@@ -171,11 +171,24 @@ def months_to_show(now: dt.datetime) -> list[tuple[int, int]]:
     return [(y, m), (ny, nm)]
 
 
+VARIANTS = 6                 # '추천 다시 받기' 버튼으로 돌아가며 보는 추천 세트 수 (0번 = 기본, PDF 기준)
+
+
+def encode(days: list) -> list:
+    """[[메뉴, 방법], ...] → [메뉴*3+방법, ...] (페이지 크기 줄이기)"""
+    return [[i * 3 + m for i, m in day] for day in days]
+
+
+def decode(days: list) -> list:
+    return [[[x // 3, x % 3] for x in day] for day in days]
+
+
 def build_plans(now: dt.datetime) -> dict:
+    """plans[YYYY-MM][테마] = [세트0, 세트1, …]"""
     themes = ["전체"] + [k for k, _ in M.THEMES]
     plans = {}
     for y, m in months_to_show(now):
-        plans[f"{y}-{m:02d}"] = {t: plan_month(y, m, t) for t in themes}
+        plans[f"{y}-{m:02d}"] = {t: [encode(plan_month(y, m, t, v)) for v in range(VARIANTS)] for t in themes}
     return plans
 
 
@@ -268,6 +281,13 @@ section{margin-top:24px}h2{font-size:19px;margin:0 0 12px}h2 .num{color:var(--ac
 .th{border:1px solid var(--border);background:var(--surface-1);color:var(--text-primary);border-radius:999px;padding:7px 12px;font-size:14px;cursor:pointer;font-family:inherit}
 .th small{color:var(--text-muted);margin-left:3px;font-size:11.5px}
 .th.on{background:var(--accent);border-color:var(--accent);color:#fff}.th.on small{color:#ffe6d9}
+header{display:flex;justify-content:space-between;align-items:flex-start;gap:12px;flex-wrap:wrap}
+.regen{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.regen #regen{border:none;background:var(--accent);color:#fff;font-size:15px;font-weight:600;padding:10px 16px;border-radius:12px;cursor:pointer;font-family:inherit}
+.regen #regen:active{transform:scale(.97)}
+.regen .vl{font-size:12.5px;color:var(--text-secondary)}
+.regen #vreset{border:none;background:none;color:var(--text-secondary);text-decoration:underline;font-size:12.5px;cursor:pointer;font-family:inherit;padding:0}
+.flash{animation:fl .5s}@keyframes fl{from{background:var(--accent-soft)}to{background:transparent}}
 .calhead{display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap;margin-bottom:10px}
 .mnav{display:flex;align-items:center;gap:8px}.mnav b{font-size:18px;min-width:120px;text-align:center}
 .mnav button{border:1px solid var(--border);background:var(--surface-1);color:var(--text-primary);border-radius:10px;width:36px;height:34px;font-size:18px;cursor:pointer}
@@ -315,8 +335,9 @@ dialog::backdrop{background:rgba(0,0,0,.45)}
 .btns a{text-decoration:none;font-size:13.5px;border:1px solid var(--border);background:var(--surface-1);color:var(--text-primary);border-radius:999px;padding:6px 12px}
 .other{font-size:13px;color:var(--text-muted);margin:16px 0 0}
 </style></head><body><div class="wrap">
-<header><h1>이번달 식단 추천</h1>
-<div class="meta">생성 __GENERATED__ · 매일 갱신 · <a href="latest.pdf">PDF</a> · <a href="archive/">지난 리포트</a></div></header>
+<header><div><h1>이번달 식단 추천</h1>
+<div class="meta">생성 __GENERATED__ · 매일 갱신 · <a href="latest.pdf">PDF</a> · <a href="archive/">지난 리포트</a></div></div>
+<div class="regen"><button id="regen">🔄 추천 다시 받기</button><span class="vl" id="vlabel"></span><button id="vreset" hidden>처음 추천으로</button></div></header>
 __DEMO__
 <section id="s1"><h2><span class="num">①</span>테마</h2>
  <div class="card"><div class="themes" id="themes"></div></div></section>
@@ -343,7 +364,14 @@ const D=__DATA__;
 const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const EMO=['🍳','📦','🛵'],MODE=['집밥','밀키트','배달'],WD='일월화수목금토';
 const months=Object.keys(D.plans).sort();
-let theme='전체',mi=0;
+let theme='전체',mi=0,NV=1,vsel=0;
+try{NV=D.plans[months[0]]['전체'].length;vsel=Math.min(NV-1,+(localStorage.getItem('meal-variant')||0))||0;}catch(e){}
+// 지난 날짜는 기본 세트(0번), 오늘부터는 고른 세트
+function getPlan(ym,t){const sets=(D.plans[ym]||{})[t]||[],dec=a=>(a||[]).map(d=>d.map(x=>[Math.floor(x/3),x%3]));
+ const base=dec(sets[0]),cur=dec(sets[vsel]||sets[0]);
+ return base.map((d,k)=>(`${ym}-${String(k+1).padStart(2,'0')}`<D.today)?d:cur[k]);}
+function renderV(){document.getElementById('vlabel').textContent=vsel?`추천 세트 ${vsel+1}/${NV} · 오늘부터 적용`:`기본 추천 (세트 1/${NV})`;
+ document.getElementById('vreset').hidden=!vsel;}
 const q=s=>encodeURIComponent(s);
 function inTheme(d,t,mon){if(t==='전체')return true;if(t==='제철')return d.s.includes(mon);if(t==='밀키트')return d.kit;if(t==='배달맛집')return !!d.dl;return d.t.includes(t);}
 function renderThemes(){const mon=+months[mi].slice(5);
@@ -354,7 +382,7 @@ function dishBtn(day,k,[i,m]){const d=D.dishes[i];return `<button class="dish m$
 function renderCal(){const ym=months[mi],[y,mo]=ym.split('-').map(Number);
  document.getElementById('mtitle').textContent=`${y}년 ${mo}월`;
  document.getElementById('prev').disabled=mi===0;document.getElementById('next').disabled=mi===months.length-1;
- const plan=D.plans[ym][theme]||[];
+ const plan=getPlan(ym,theme);
  document.getElementById('cur').innerHTML=theme==='전체'?'하루 3가지: 국·찌개 + 고기·생선 메인 + 별미 · 금·토와 가끔은 배달 메뉴 포함':`<b>#${esc(theme)}</b> 테마로 짠 식단입니다 · 다시 누르면 전체로 돌아갑니다`;
  const first=new Date(y,mo-1,1).getDay(),nd=new Date(y,mo,0).getDate();
  let h=[...WD].map((w,i)=>`<div class="wd${i===0?' sun':i===6?' sat':''}">${w}</div>`).join('');
@@ -412,7 +440,11 @@ document.getElementById('next').onclick=()=>{if(mi<months.length-1){mi++;renderT
 const FAILS=D.fails||[];
 document.getElementById('news').innerHTML=D.news.length?D.news.map(n=>`<li><a href="${esc(n.link)}" target="_blank" rel="noopener">${esc(n.title)}</a></li>`).join('')
  :`<li class="muted">${FAILS.includes('오늘의 음식 뉴스')?'<b>데이터 없음</b> — 다시 시도했지만 가져오지 못했습니다. 다음 실행 때 다시 받아 옵니다.':'오늘 기사가 없습니다.'}</li>`;
-renderLog();renderThemes();renderCal();
+function setV(v){vsel=v;try{localStorage.setItem('meal-variant',String(v));}catch(e){}renderV();renderCal();
+ const c=document.getElementById('cal');c.classList.remove('flash');void c.offsetWidth;c.classList.add('flash');}
+document.getElementById('regen').onclick=()=>setV((vsel+1)%NV);
+document.getElementById('vreset').onclick=()=>setV(0);
+renderLog();renderThemes();renderV();renderCal();
 </script></body></html>
 """
 
@@ -444,7 +476,7 @@ def render_pdf(d: dict, now: dt.datetime, path: Path) -> Path:
     MC = ["#2f8f5b", "#2a78d6", "#c2410c"]
     MK = ["", "[키트] ", "[배달] "]
     ym = now.strftime("%Y-%m")
-    plan = d["plans"][ym]["전체"]
+    plan = decode(d["plans"][ym]["전체"][0])
     dishes = d["dishes"]
 
     def wrap(t, w):

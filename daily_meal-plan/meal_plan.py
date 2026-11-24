@@ -300,6 +300,22 @@ section{margin-top:24px}h2{font-size:19px;margin:0 0 12px}h2 .num{color:var(--ac
 .th{border:1px solid var(--border);background:var(--surface-1);color:var(--text-primary);border-radius:999px;padding:7px 12px;font-size:14px;cursor:pointer;font-family:inherit}
 .th small{color:var(--text-muted);margin-left:3px;font-size:11.5px}
 .th:disabled{opacity:.35;cursor:default}
+details.all>summary{list-style:none;cursor:pointer;display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+details.all>summary::-webkit-details-marker{display:none}
+details.all .h2{font-size:19px;font-weight:700}
+details.all .tog{margin-left:auto;font-size:13px;color:var(--accent);font-weight:600}
+details.all .tog::after{content:'펼치기 ▾'}details.all[open] .tog::after{content:'접기 ▴'}
+.allopt{display:flex;gap:12px;align-items:center;flex-wrap:wrap;margin:12px 0 8px;font-size:13.5px;color:var(--text-secondary)}
+.allopt select{font-family:inherit;font-size:13.5px;padding:4px 6px;border-radius:8px;border:1px solid var(--border);background:var(--surface-1);color:var(--text-primary)}
+.allhead,.row{display:grid;grid-template-columns:minmax(120px,1.3fr) 54px 44px 62px 92px minmax(0,3fr);gap:8px;align-items:center}
+.allhead{font-size:11.5px;color:var(--text-muted);padding:4px 8px;border-bottom:1px solid var(--border)}
+.row{width:100%;text-align:left;border:none;border-bottom:1px solid var(--border);background:none;color:var(--text-primary);padding:7px 8px;font-size:13.5px;font-family:inherit;cursor:pointer}
+.row:hover{background:var(--accent-soft)}
+.row .rn{font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.row .rt,.row .rs{font-size:12px;color:var(--text-secondary);white-space:nowrap}
+.row .rg{font-size:12px;color:var(--text-muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.row .lv{margin-left:0;justify-self:start}
+@media (max-width:720px){.allhead{display:none}.row{grid-template-columns:minmax(0,1fr) 44px 40px 54px;gap:6px}.row .rs,.row .rg{display:none}}
 .th.on{background:var(--accent);border-color:var(--accent);color:#fff}.th.on small{color:#ffe6d9}
 header{display:flex;justify-content:space-between;align-items:flex-start;gap:12px;flex-wrap:wrap}
 .regen{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
@@ -366,7 +382,13 @@ __DEMO__
 <section id="s1"><h2><span class="num">①</span>테마</h2>
  <div class="card"><div class="themes" id="themes"></div></div></section>
 
-<section id="s2"><h2><span class="num">②</span>식단 달력</h2>
+<section id="sall"><details class="card all" id="alld"><summary><span class="h2"><span class="num">②</span>전체 음식</span> <span class="muted" id="allcnt"></span><span class="tog"></span></summary>
+  <div class="allopt"><label><input type="checkbox" id="allsel"> 고른 테마에 맞는 메뉴만</label>
+   <select id="allsort"><option value="name">가나다순</option><option value="lv">쉬운 순</option><option value="time">빠른 순</option></select></div>
+  <div class="allhead"><span>메뉴</span><span>난이도</span><span>시간</span><span>방법</span><span>제철</span><span>테마</span></div>
+  <div id="alllist"></div></details></section>
+
+<section id="s2"><h2><span class="num">③</span>식단 달력</h2>
  <div class="card">
   <div class="calhead"><div class="mnav"><button id="prev" aria-label="이전 달">‹</button><b id="mtitle"></b><button id="next" aria-label="다음 달">›</button></div>
    <div class="legend"><span>🍳 집밥(레시피)</span><span>📦 밀키트</span><span>🛵 배달</span><span>✔ 실제로 먹은 음식</span></div></div>
@@ -376,7 +398,7 @@ __DEMO__
   <div class="cal" id="cal"></div>
  </div></section>
 
-<section id="s3"><h2><span class="num">③</span>오늘의 음식 뉴스</h2>
+<section id="s3"><h2><span class="num">④</span>오늘의 음식 뉴스</h2>
  <div class="card"><ol class="news" id="news"></ol></div></section>
 
 <footer>메뉴를 누르면 레시피·밀키트 주문·배달 음식점을 볼 수 있습니다. 배달 프랜차이즈는 동네마다 가맹점 유무가 다르니 지도·배달앱에서 확인하세요.
@@ -425,6 +447,18 @@ function renderV(){document.getElementById('vlabel').textContent=vsel?`추천 �
  document.getElementById('vreset').hidden=!vsel;}
 const q=s=>encodeURIComponent(s);
 function inTheme(d,t,mon){if(t==='전체')return true;if(t==='제철')return d.s.includes(mon);if(t==='밀키트')return d.kit;if(t==='배달맛집')return !!d.dl;return d.t.includes(t);}
+// ---- 전체 음식 목록 (접힘)
+function renderAll(){const mon=+months[mi].slice(5),only=document.getElementById('allsel').checked&&sel.length,how=document.getElementById('allsort').value;
+ const LVO={'쉬움':0,'보통':1,'어려움':2};
+ let list=D.dishes.map((d,i)=>i).filter(i=>!only||sel.every(t=>inTheme(D.dishes[i],t,mon)));
+ list.sort((a,b)=>{const x=D.dishes[a],y=D.dishes[b];
+  return how==='lv'?(LVO[x.lv]-LVO[y.lv])||(x.time-y.time):how==='time'?(x.time-y.time):x.n.localeCompare(y.n,'ko');});
+ document.getElementById('allcnt').textContent=only?`${list.length} / ${D.dishes.length}가지`:`${D.dishes.length}가지`;
+ if(!document.getElementById('alld').open)return;
+ document.getElementById('alllist').innerHTML=list.map(i=>{const d=D.dishes[i];
+  const how=['🍳',d.kit?'📦':'',d.dl?'🛵':''].join('');
+  const ss=d.s.length?'제철 '+d.s.join('·')+'월':'사계절';
+  return `<button class="row" data-i="${i}"><span class="rn">${esc(d.n)}</span>${lvTag(d)}<span class="rt">${d.time}분</span><span class="rm">${how}</span><span class="rs">${ss}</span><span class="rg">${d.t.map(t=>'#'+esc(t)).join(' ')}</span></button>`;}).join('')||'<div class="empty">고른 테마에 맞는 메뉴가 없습니다</div>';}
 function renderThemes(){const mon=+months[mi].slice(5);
  const all=[{k:'전체',e:'🍽️'}].concat(D.themes);
  document.getElementById('themes').innerHTML=all.map(t=>{
@@ -491,13 +525,15 @@ function openDish(i,m){const d=D.dishes[i];
  document.getElementById('db').innerHTML=parts[0]+(parts.length>1?'<p class="other">다른 방법</p>'+parts.slice(1).join(''):'');
  const dlg=document.getElementById('dlg');dlg.showModal?dlg.showModal():dlg.setAttribute('open','');document.getElementById('db').scrollTop=0;}
 document.addEventListener('click',e=>{const t=e.target.closest('.th');if(t){const k=t.dataset.t;
-  sel=k==='전체'?[]:(sel.includes(k)?sel.filter(x=>x!==k):[...sel,k]);renderThemes();renderCal();return;}
- const b=e.target.closest('.dish');if(b){openDish(+b.dataset.i,+b.dataset.m);return;}});
+  sel=k==='전체'?[]:(sel.includes(k)?sel.filter(x=>x!==k):[...sel,k]);renderThemes();renderCal();renderAll();return;}
+ const b=e.target.closest('.dish');if(b){openDish(+b.dataset.i,+b.dataset.m);return;}
+ const r=e.target.closest('.row');if(r){openDish(+r.dataset.i,0);return;}});
+['alld:toggle','allsel:change','allsort:change'].forEach(x=>{const [id,ev]=x.split(':');document.getElementById(id).addEventListener(ev,renderAll);});
 const dlg=document.getElementById('dlg');
 document.getElementById('dx').onclick=()=>dlg.close?dlg.close():dlg.removeAttribute('open');
 dlg.addEventListener('click',e=>{if(e.target===dlg)dlg.close();});
-document.getElementById('prev').onclick=()=>{if(mi>0){mi--;renderThemes();renderCal();}};
-document.getElementById('next').onclick=()=>{if(mi<months.length-1){mi++;renderThemes();renderCal();}};
+document.getElementById('prev').onclick=()=>{if(mi>0){mi--;renderThemes();renderCal();renderAll();}};
+document.getElementById('next').onclick=()=>{if(mi<months.length-1){mi++;renderThemes();renderCal();renderAll();}};
 const FAILS=D.fails||[];
 document.getElementById('news').innerHTML=D.news.length?D.news.map(n=>`<li><a href="${esc(n.link)}" target="_blank" rel="noopener">${esc(n.title)}</a></li>`).join('')
  :`<li class="muted">${FAILS.includes('오늘의 음식 뉴스')?'<b>데이터 없음</b> — 다시 시도했지만 가져오지 못했습니다. 다음 실행 때 다시 받아 옵니다.':'오늘 기사가 없습니다.'}</li>`;
@@ -505,7 +541,7 @@ function setV(v){vsel=v;try{localStorage.setItem('meal-variant',String(v));}catc
  const c=document.getElementById('cal');c.classList.remove('flash');void c.offsetWidth;c.classList.add('flash');}
 document.getElementById('regen').onclick=()=>setV((vsel+1)%NV);
 document.getElementById('vreset').onclick=()=>setV(0);
-renderLog();renderThemes();renderV();renderCal();
+renderLog();renderThemes();renderV();renderCal();renderAll();
 </script></body></html>
 """
 

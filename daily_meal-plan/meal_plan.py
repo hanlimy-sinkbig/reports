@@ -196,6 +196,20 @@ def build_plans(now: dt.datetime) -> dict:
     return plans
 
 
+def build_ctx(now: dt.datetime) -> dict:
+    """테마 여러 개(AND) 식단을 페이지에서 짤 때 쓰는 날짜별 기록 반영값: {날짜: [뺄 메뉴, {메뉴: 배수}]}"""
+    out = {}
+    if not HIST.days:
+        return out
+    for y, m in months_to_show(now):
+        for day in range(1, calendar.monthrange(y, m)[1] + 1):
+            date = dt.date(y, m, day)
+            ate, mult = HIST.context(date)
+            if ate or mult:
+                out[date.isoformat()] = [sorted(ate), {str(i): round(f, 3) for i, f in mult.items()}]
+    return out
+
+
 # ---------------------------------------------------------------- 뉴스
 def get(url):
     def once():
@@ -261,6 +275,7 @@ def build_data(now: dt.datetime, news: list[dict]) -> dict:
         "generated": now.strftime("%Y-%m-%d %H:%M KST"), "today": now.strftime("%Y-%m-%d"), "area": M.AREA,
         "updated": M.UPDATED, "themes": [{"k": k, "e": e} for k, e in M.THEMES], "dishes": dishes,
         "plans": build_plans(now), "news": news,
+        "ctx": build_ctx(now),
         "log": HIST.by_date(), "logsum": HIST.summary(now.date()) if HIST.days else None, "logon": LOG_STATE,
     }
 
@@ -284,6 +299,7 @@ section{margin-top:24px}h2{font-size:19px;margin:0 0 12px}h2 .num{color:var(--ac
 .themes{display:flex;flex-wrap:wrap;gap:7px}
 .th{border:1px solid var(--border);background:var(--surface-1);color:var(--text-primary);border-radius:999px;padding:7px 12px;font-size:14px;cursor:pointer;font-family:inherit}
 .th small{color:var(--text-muted);margin-left:3px;font-size:11.5px}
+.th:disabled{opacity:.35;cursor:default}
 .th.on{background:var(--accent);border-color:var(--accent);color:#fff}.th.on small{color:#ffe6d9}
 header{display:flex;justify-content:space-between;align-items:flex-start;gap:12px;flex-wrap:wrap}
 .regen{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
@@ -372,11 +388,38 @@ const D=__DATA__;
 const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const EMO=['🍳','📦','🛵'],MODE=['집밥','밀키트','배달'],WD='일월화수목금토';
 const months=Object.keys(D.plans).sort();
-let theme='전체',mi=0,NV=1,vsel=0;
+let sel=[],mi=0,NV=1,vsel=0;   // sel: 고른 테마들 (여러 개면 AND)
 try{NV=D.plans[months[0]]['전체'].length;vsel=Math.min(NV-1,+(localStorage.getItem('meal-variant')||0))||0;}catch(e){}
 // 지난 날짜는 기본 세트(0번), 오늘부터는 고른 세트
 function getPlan(ym,t){const sets=(D.plans[ym]||{})[t]||[],dec=a=>(a||[]).map(d=>d.map(x=>[Math.floor(x/3),x%3]));
  const base=dec(sets[0]),cur=dec(sets[vsel]||sets[0]);
+ return base.map((d,k)=>(`${ym}-${String(k+1).padStart(2,'0')}`<D.today)?d:cur[k]);}
+// ---- 테마 여러 개(AND): 페이지에서 바로 식단 짜기 (규칙은 meal_plan.py plan_month 와 같음)
+const LVW={'쉬움':1,'보통':.6,'어려움':.3};
+function seedRng(str){let h=1779033703^str.length;for(let i=0;i<str.length;i++){h=Math.imul(h^str.charCodeAt(i),3432918353);h=h<<13|h>>>19;}
+ let a=(()=>{h=Math.imul(h^h>>>16,2246822507);h=Math.imul(h^h>>>13,3266489909);return (h^=h>>>16)>>>0;})();
+ return ()=>{a|=0;a=a+0x6D2B79F5|0;let t=Math.imul(a^a>>>15,1|a);t=t+Math.imul(t^t>>>7,61|t)^t;return((t^t>>>14)>>>0)/4294967296;};}
+function wgt(d,mon){const w=LVW[d.lv]||1;return d.s.length?w*(d.s.includes(mon)?3:.1):w;}
+function multiPool(ts,mon){return D.dishes.map((d,i)=>i).filter(i=>ts.every(t=>inTheme(D.dishes[i],t,mon)));}
+const _mc={};
+function planMulti(ym,ts,v){const key=ym+'|'+ts.join('+')+'|'+v;if(_mc[key])return _mc[key];
+ const [y,mo]=ym.split('-').map(Number),nd=new Date(y,mo,0).getDate(),pool=multiPool(ts,mo),out=[];
+ const rng=seedRng(`multi|${key}|${D.dishes.length}`),per=Math.min(3,pool.length),keep=per?Math.max(0,Math.min(3,Math.floor(pool.length/per)-1)):0;
+ const noDl=ts.includes('밀키트'),allDl=ts.includes('배달맛집'),recent=[];
+ const pick=(av,mult)=>{const c=pool.filter(i=>!av.has(i));if(!c.length)return null;
+  const ws=c.map(i=>wgt(D.dishes[i],mo)*(mult[i]||1)),tot=ws.reduce((a,b)=>a+b,0);let r=rng()*tot;
+  for(let k=0;k<c.length;k++){r-=ws[k];if(r<=0)return c[k];}return c[c.length-1];};
+ for(let day=1;day<=nd;day++){const ds=`${ym}-${String(day).padStart(2,'0')}`,wd=new Date(y,mo-1,day).getDay();
+  const [ate,mult]=(D.ctx||{})[ds]||[[],{}];
+  const avoid=new Set([...recent.flat(),...ate]),dlvDay=!noDl&&(allDl||wd===5||wd===6||rng()<.15),picks=[];
+  while(picks.length<per){let p=pick(new Set([...avoid,...picks]),mult);if(p===null)p=pick(new Set(picks),mult);if(p===null)break;picks.push(p);}
+  let dlDone=false;const modes=[];
+  for(const i of [...picks].reverse()){const d=D.dishes[i];let m=0;
+   if(allDl)m=2;else if(noDl)m=1;else if(dlvDay&&!dlDone&&d.dl){m=2;dlDone=true;}else if(d.kit&&rng()<.45)m=1;modes.push(m);}
+  modes.reverse();out.push(picks.map((i,k)=>[i,modes[k]]));recent.push(picks);if(recent.length>keep)recent.shift();}
+ return _mc[key]=out;}
+function planFor(ym){if(sel.length<2)return getPlan(ym,sel[0]||'전체');
+ const ts=[...sel].sort(),base=planMulti(ym,ts,0),cur=planMulti(ym,ts,vsel);
  return base.map((d,k)=>(`${ym}-${String(k+1).padStart(2,'0')}`<D.today)?d:cur[k]);}
 function renderV(){document.getElementById('vlabel').textContent=vsel?`추천 세트 ${vsel+1}/${NV} · 오늘부터 적용`:`기본 추천 (세트 1/${NV})`;
  document.getElementById('vreset').hidden=!vsel;}
@@ -384,8 +427,11 @@ const q=s=>encodeURIComponent(s);
 function inTheme(d,t,mon){if(t==='전체')return true;if(t==='제철')return d.s.includes(mon);if(t==='밀키트')return d.kit;if(t==='배달맛집')return !!d.dl;return d.t.includes(t);}
 function renderThemes(){const mon=+months[mi].slice(5);
  const all=[{k:'전체',e:'🍽️'}].concat(D.themes);
- document.getElementById('themes').innerHTML=all.map(t=>{const n=D.dishes.filter(d=>inTheme(d,t.k,mon)).length;
-  return `<button class="th${t.k===theme?' on':''}" data-t="${esc(t.k)}">${t.e} ${t.k==='전체'?'전체':'#'+esc(t.k)}<small>${n}</small></button>`}).join('');}
+ document.getElementById('themes').innerHTML=all.map(t=>{
+  const on=t.k==='전체'?!sel.length:sel.includes(t.k);
+  const ts=t.k==='전체'?[]:(on?sel:[...sel,t.k]);       // 숫자 = 이 테마까지 고르면 남는 메뉴 수
+  const n=D.dishes.filter(d=>ts.every(x=>inTheme(d,x,mon))).length;
+  return `<button class="th${on?' on':''}" data-t="${esc(t.k)}"${!on&&!n?' disabled':''}>${t.e} ${t.k==='전체'?'전체':'#'+esc(t.k)}<small>${n}</small></button>`}).join('');}
 const LV={'쉬움':[0,'쉬움'],'보통':[1,'중간'],'어려움':[2,'어려움']};
 const lvTag=d=>{const [c,t]=LV[d.lv]||LV['쉬움'];return `<span class="lv lv${c}">${t}</span>`;};
 // 요리하는 메뉴(집밥·밀키트)만 오른쪽에 난이도, 배달은 표시 안 함
@@ -393,8 +439,11 @@ function dishBtn(day,k,[i,m]){const d=D.dishes[i];return `<button class="dish m$
 function renderCal(){const ym=months[mi],[y,mo]=ym.split('-').map(Number);
  document.getElementById('mtitle').textContent=`${y}년 ${mo}월`;
  document.getElementById('prev').disabled=mi===0;document.getElementById('next').disabled=mi===months.length-1;
- const plan=getPlan(ym,theme);
- document.getElementById('cur').innerHTML=theme==='전체'?'하루 3가지: 국·찌개 + 고기·생선 메인 + 별미 · 금·토와 가끔은 배달 메뉴 포함':`<b>#${esc(theme)}</b> 테마로 짠 식단입니다 · 다시 누르면 전체로 돌아갑니다`;
+ const plan=planFor(ym);
+ const tags=sel.map(t=>'#'+esc(t)).join(' + '),cnt=multiPool(sel,mo).length;
+ document.getElementById('cur').innerHTML=!sel.length?'하루 3가지: 국·찌개 + 고기·생선 메인 + 별미 · 금·토와 가끔은 배달 메뉴 포함 · 테마를 여러 개 누르면 모두 해당하는 메뉴만 추천'
+  :sel.length===1?`<b>${tags}</b> 테마로 짠 식단 (${cnt}가지) · 다른 테마를 더 누르면 둘 다 해당하는 메뉴만 · 다시 누르면 해제`
+  :`<b>${tags}</b> 모두 해당하는 메뉴 ${cnt}가지로 짠 식단${cnt<3?' · 메뉴가 적어 매일 같은 메뉴가 나옵니다':cnt<7?' · 메뉴가 적어 자주 반복됩니다':''} · 누른 테마를 다시 누르면 해제, ‘전체’는 모두 해제`;
  const first=new Date(y,mo-1,1).getDay(),nd=new Date(y,mo,0).getDate();
  let h=[...WD].map((w,i)=>`<div class="wd${i===0?' sun':i===6?' sat':''}">${w}</div>`).join('');
  for(let i=0;i<first;i++)h+='<div class="day blank"></div>';
@@ -441,7 +490,8 @@ function openDish(i,m){const d=D.dishes[i];
  const parts=order.map(x=>blocks[x]()).filter(Boolean);
  document.getElementById('db').innerHTML=parts[0]+(parts.length>1?'<p class="other">다른 방법</p>'+parts.slice(1).join(''):'');
  const dlg=document.getElementById('dlg');dlg.showModal?dlg.showModal():dlg.setAttribute('open','');document.getElementById('db').scrollTop=0;}
-document.addEventListener('click',e=>{const t=e.target.closest('.th');if(t){theme=(t.dataset.t===theme&&theme!=='전체')?'전체':t.dataset.t;renderThemes();renderCal();return;}
+document.addEventListener('click',e=>{const t=e.target.closest('.th');if(t){const k=t.dataset.t;
+  sel=k==='전체'?[]:(sel.includes(k)?sel.filter(x=>x!==k):[...sel,k]);renderThemes();renderCal();return;}
  const b=e.target.closest('.dish');if(b){openDish(+b.dataset.i,+b.dataset.m);return;}});
 const dlg=document.getElementById('dlg');
 document.getElementById('dx').onclick=()=>dlg.close?dlg.close():dlg.removeAttribute('open');

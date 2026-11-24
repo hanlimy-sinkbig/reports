@@ -306,6 +306,8 @@ section{margin-top:24px}h2{font-size:19px;margin:0 0 12px}h2 .num{color:var(--ac
 .alltog:hover{background:var(--accent-soft)}
 #allbody{padding:4px 14px 14px;border-top:1px solid var(--border)}
 #allbody .allopt{margin-top:10px}
+#alllist{overflow-y:auto;overscroll-behavior:contain;-webkit-overflow-scrolling:touch;border-bottom:1px solid var(--border)}
+.allmore{font-size:12px;color:var(--text-muted);text-align:center;padding-top:6px}
 .allopt{display:flex;gap:12px;align-items:center;flex-wrap:wrap;margin:0 0 8px;font-size:13.5px;color:var(--text-secondary)}
 .allopt select{font-family:inherit;font-size:13.5px;padding:4px 6px;border-radius:8px;border:1px solid var(--border);background:var(--surface-1);color:var(--text-primary)}
 .allhead,.row{display:grid;grid-template-columns:minmax(120px,1.3fr) 54px 44px 62px 92px minmax(0,3fr);gap:8px;align-items:center}
@@ -389,7 +391,7 @@ __DEMO__
   <div class="allopt"><label><input type="checkbox" id="allsel"> 고른 테마에 맞는 메뉴만</label>
    <select id="allsort"><option value="name">가나다순</option><option value="lv">쉬운 순</option><option value="time">빠른 순</option></select></div>
   <div class="allhead"><span>메뉴</span><span>난이도</span><span>시간</span><span>방법</span><span>제철</span><span>테마</span></div>
-  <div id="alllist"></div></div></div></section>
+  <div id="alllist"></div><div class="allmore" id="allmore"></div></div></div></section>
 
 <section id="s2"><h2><span class="num">③</span>식단 달력</h2>
  <div class="card">
@@ -461,7 +463,13 @@ function renderAll(){const mon=+months[mi].slice(5),only=document.getElementById
  document.getElementById('alllist').innerHTML=list.map(i=>{const d=D.dishes[i];
   const how=['🍳',d.kit?'📦':'',d.dl?'🛵':''].join('');
   const ss=d.s.length?'제철 '+d.s.join('·')+'월':'사계절';
-  return `<button class="row" data-i="${i}"><span class="rn">${esc(d.n)}</span>${lvTag(d)}<span class="rt">${d.time}분</span><span class="rm">${how}</span><span class="rs">${ss}</span><span class="rg">${d.t.map(t=>'#'+esc(t)).join(' ')}</span></button>`;}).join('')||'<div class="empty">고른 테마에 맞는 메뉴가 없습니다</div>';}
+  return `<button class="row" data-i="${i}"><span class="rn">${esc(d.n)}</span>${lvTag(d)}<span class="rt">${d.time}분</span><span class="rm">${how}</span><span class="rs">${ss}</span><span class="rg">${d.t.map(t=>'#'+esc(t)).join(' ')}</span></button>`;}).join('')||'<div class="empty">고른 테마에 맞는 메뉴가 없습니다</div>';
+ fitAll(list.length);}
+// 목록은 10줄 높이까지만 보이고 나머지는 안에서 스크롤
+function fitAll(n){const el=document.getElementById('alllist'),r=el.querySelector('.row');
+ el.style.maxHeight=r?(r.offsetHeight*10)+'px':'';el.scrollTop=0;
+ document.getElementById('allmore').textContent=n>10?`10개씩 보입니다 · 목록 안에서 스크롤하면 나머지 ${n-10}개`:'';}
+window.addEventListener('resize',()=>{if(!document.getElementById('allbody').hidden)fitAll(document.querySelectorAll('#alllist .row').length);});
 function renderThemes(){const mon=+months[mi].slice(5);
  const all=[{k:'전체',e:'🍽️'}].concat(D.themes);
  document.getElementById('themes').innerHTML=all.map(t=>{

@@ -388,7 +388,7 @@ __DEMO__
 <section id="sall"><h2 class="allh"><span class="num">②</span>전체 음식 <span class="muted" id="allcnt"></span></h2>
  <div class="card allcard"><button class="alltog" id="alltog" aria-expanded="false">펼치기 ▾</button>
  <div id="allbody" hidden>
-  <div class="allopt"><label><input type="checkbox" id="allsel"> 고른 테마에 맞는 메뉴만</label>
+  <div class="allopt"><label><input type="checkbox" id="allsel" checked> 고른 테마에 맞는 메뉴만</label>
    <select id="allsort"><option value="name">가나다순</option><option value="lv">쉬운 순</option><option value="time">빠른 순</option></select></div>
   <div class="allhead"><span>메뉴</span><span>난이도</span><span>시간</span><span>방법</span><span>제철</span><span>테마</span></div>
   <div id="alllist"></div><div class="allmore" id="allmore"></div></div></div></section>

@@ -33,6 +33,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import meal_data as M  # noqa: E402
+import meal_log as L  # noqa: E402
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "_shared"))
 import net_retry as NR  # noqa: E402
@@ -72,11 +73,15 @@ def weight(d: dict, month: int) -> float:
     return 3.0 if month in d["season"] else 0.25
 
 
-def pick(rng: random.Random, cands: list[int], month: int, avoid: set[int]) -> int | None:
+HIST = L.History()          # 식사 기록 (main 에서 채움). 비어 있으면 기록 반영 없이 짠다.
+
+
+def pick(rng: random.Random, cands: list[int], month: int, avoid: set[int], mult: dict | None = None) -> int | None:
     pool = [i for i in cands if i not in avoid]
     if not pool:
         return None
-    ws = [weight(M.DISHES[i], month) for i in pool]
+    mult = mult or {}
+    ws = [weight(M.DISHES[i], month) * mult.get(i, 1.0) for i in pool]
     return rng.choices(pool, weights=ws, k=1)[0]
 
 
@@ -95,24 +100,26 @@ def plan_month(year: int, month: int, theme: str) -> list[list[list[int]]]:
     soup = [i for i in idx if "국물" in dishes[i]["tags"]]
     main = [i for i in idx if i not in soup and ({"고기", "해산물"} & set(dishes[i]["tags"]))]
     for day in range(1, ndays + 1):
-        wd = dt.date(year, month, day).weekday()
-        avoid = {i for r in recent for i in r}
+        date = dt.date(year, month, day)
+        wd = date.weekday()
+        ate, mult = HIST.context(date)                      # 최근 7일에 먹은 메뉴·좋아한/별로인 메뉴·많이 먹은 종류
+        avoid = {i for r in recent for i in r} | ate
         dlv_day = theme != "밀키트" and (theme == "배달맛집" or wd in (4, 5) or rng.random() < 0.15)
         picks: list[int] = []
         if theme == "전체":
             # 국·찌개 1 + 고기·생선 메인 1 + 별미 1 (배달 날엔 별미를 배달 가능 메뉴로)
             for cands in (soup, main):
-                p = pick(rng, cands, month, avoid | set(picks))
+                p = pick(rng, cands, month, avoid | set(picks), mult)
                 if p is not None:
                     picks.append(p)
             third = [i for i in idx if i not in soup and (not dlv_day or dishes[i]["dl"])]
-            p = pick(rng, third, month, avoid | set(picks))
+            p = pick(rng, third, month, avoid | set(picks), mult)
             if p is not None:
                 picks.append(p)
         while len(picks) < per:
-            p = pick(rng, idx, month, avoid | set(picks))
+            p = pick(rng, idx, month, avoid | set(picks), mult)
             if p is None:                                  # 최근 메뉴를 빼면 모자랄 때만 반복 허용
-                p = pick(rng, idx, month, set(picks))
+                p = pick(rng, idx, month, set(picks), mult)
             if p is None:
                 break
             picks.append(p)
@@ -137,6 +144,25 @@ def plan_month(year: int, month: int, theme: str) -> list[list[list[int]]]:
         if len(recent) > keep_days:
             recent.pop(0)
     return out
+
+
+LOG_STATE = "off"            # off: 파일 ID 없음 · ok: 읽음 · fail: 못 읽음
+
+
+def load_history() -> None:
+    global HIST, LOG_STATE
+    fid = L.log_file_id()
+    if not fid or requests is None:
+        log("식사 기록: MEAL_LOG_ID 없음 → 기록 없이 추천")
+        return
+    try:
+        HIST = L.History.fetch(get, fid)
+        LOG_STATE = "ok"
+        log(f"식사 기록: {len(HIST.days)}일치")
+    except Exception as e:
+        LOG_STATE = "fail"
+        log(f"식사 기록 실패: {e}")
+        NR.fail("식사 기록(구글 드라이브)", e)
 
 
 def months_to_show(now: dt.datetime) -> list[tuple[int, int]]:
@@ -218,6 +244,7 @@ def build_data(now: dt.datetime, news: list[dict]) -> dict:
         "generated": now.strftime("%Y-%m-%d %H:%M KST"), "today": now.strftime("%Y-%m-%d"), "area": M.AREA,
         "updated": M.UPDATED, "themes": [{"k": k, "e": e} for k, e in M.THEMES], "dishes": dishes,
         "plans": build_plans(now), "news": news,
+        "log": HIST.by_date(), "logsum": HIST.summary(now.date()) if HIST.days else None, "logon": LOG_STATE,
     }
 
 
@@ -254,7 +281,11 @@ section{margin-top:24px}h2{font-size:19px;margin:0 0 12px}h2 .num{color:var(--ac
 .wd.sun{color:var(--sun)}.wd.sat{color:var(--sat)}
 .day{background:var(--surface-1);border:1px solid var(--border);border-radius:10px;padding:5px 4px 6px;min-height:118px;display:flex;flex-direction:column;gap:3px}
 .day.blank{background:transparent;border:none}
-.day.past{opacity:.55}.day.today{background:var(--today);border-color:var(--accent);box-shadow:0 0 0 1px var(--accent) inset;opacity:1}
+.day.past .dish{opacity:.5}.day .dish.ate{opacity:1;background:var(--accent-soft);border-color:transparent;border-left:3px solid var(--text-secondary)}
+.ate-s{display:block;font-size:12px;line-height:1.3;padding:3px 5px;border-radius:7px;background:var(--accent-soft);color:var(--text-secondary);border-left:3px solid var(--text-secondary)}
+.atel{font-size:11px;color:var(--text-muted);padding:0 3px}
+.logbox{font-size:13px;line-height:1.7;background:var(--surface-0);border:1px dashed var(--border);border-radius:12px;padding:8px 12px;margin-bottom:12px;color:var(--text-secondary)}
+.logbox b{color:var(--text-primary)}.day.today{background:var(--today);border-color:var(--accent);box-shadow:0 0 0 1px var(--accent) inset;opacity:1}
 .dn{font-size:12.5px;font-weight:700;padding:0 3px}.dn.sun{color:var(--sun)}.dn.sat{color:var(--sat)}.dn .w{display:none}
 .dish{display:flex;align-items:flex-start;gap:3px;width:100%;text-align:left;border:1px solid var(--border);background:var(--surface-0);color:var(--text-primary);
  border-radius:7px;padding:3px 5px;font-size:12px;line-height:1.3;cursor:pointer;font-family:inherit;word-break:keep-all}
@@ -293,8 +324,9 @@ __DEMO__
 <section id="s2"><h2><span class="num">②</span>식단 달력</h2>
  <div class="card">
   <div class="calhead"><div class="mnav"><button id="prev" aria-label="이전 달">‹</button><b id="mtitle"></b><button id="next" aria-label="다음 달">›</button></div>
-   <div class="legend"><span>🍳 집밥(레시피)</span><span>📦 밀키트</span><span>🛵 배달</span></div></div>
+   <div class="legend"><span>🍳 집밥(레시피)</span><span>📦 밀키트</span><span>🛵 배달</span><span>✔ 실제로 먹은 음식</span></div></div>
   <p class="cur" id="cur"></p>
+  <div id="logbox"></div>
   <div id="todaybox"></div>
   <div class="cal" id="cal"></div>
  </div></section>
@@ -329,13 +361,24 @@ function renderCal(){const ym=months[mi],[y,mo]=ym.split('-').map(Number);
  for(let i=0;i<first;i++)h+='<div class="day blank"></div>';
  for(let day=1;day<=nd;day++){const ds=`${ym}-${String(day).padStart(2,'0')}`,w=(first+day-1)%7;
   const cls=ds===D.today?' today':ds<D.today?' past':'';
-  const items=plan[day-1]||[];
-  h+=`<div class="day${cls}"><div class="dn${w===0?' sun':w===6?' sat':''}">${day}<span class="w"> (${WD[w]})${ds===D.today?' · 오늘':''}</span></div>`+
-   (items.length?items.map((it,k)=>dishBtn(day,k,it)).join(''):'<div class="empty">해당 메뉴 없음</div>')+'</div>';}
+  const items=plan[day-1]||[],ate=(D.log||{})[ds];
+  const ateH=ate?'<div class="atel">먹은 음식</div>'+ate.map(([t,i])=>i>=0?`<button class="dish ate" data-i="${i}" data-m="0"><span class="m">✔</span><span>${esc(t)}</span></button>`:`<span class="ate-s">✔ ${esc(t)}</span>`).join(''):'';
+  const recH=(ate&&ds<D.today)?'':(items.length?(ate?'<div class="atel">추천</div>':'')+items.map((it,k)=>dishBtn(day,k,it)).join(''):'<div class="empty">해당 메뉴 없음</div>');
+  h+=`<div class="day${cls}"><div class="dn${w===0?' sun':w===6?' sat':''}">${day}<span class="w"> (${WD[w]})${ds===D.today?' · 오늘':''}</span></div>`+ateH+recH+'</div>';}
  document.getElementById('cal').innerHTML=h;
  const tb=document.getElementById('todaybox');
  if(D.today.slice(0,7)===ym&&plan.length){const it=plan[+D.today.slice(8)-1]||[];
   tb.innerHTML=`<div class="todaybox"><b>오늘의 추천</b> ${it.map((x,k)=>dishBtn(0,k,x)).join('')}</div>`;}else tb.innerHTML='';}
+function renderLog(){const el=document.getElementById('logbox'),S=D.logsum;
+ if(D.logon==='off'){el.innerHTML='<div class="logbox">📒 식사 기록 파일이 아직 연결되지 않아 기본 추천만 보여 줍니다.</div>';return;}
+ if(D.logon==='fail'){el.innerHTML='<div class="logbox">📒 오늘은 식사 기록을 읽지 못해 기본 추천을 보여 줍니다. 다음 실행 때 다시 읽습니다.</div>';return;}
+ if(!S){el.innerHTML='<div class="logbox">📒 식사 기록 연결됨 · 아직 적힌 날이 없습니다. 먹은 음식을 적으면 다음 날부터 추천에 반영됩니다.</div>';return;}
+ const p=[`📒 <b>식사 기록 ${S.days}일</b> 반영 (최근 7일 ${S.days7}일) · 최근 7일에 먹은 메뉴는 추천에서 뺐습니다`];
+ if(S.heavy.length)p.push(`최근 2주 많이 먹은 종류 <b>${S.heavy.map(x=>'#'+esc(x)).join(' ')}</b> → 줄여서 추천`);
+ if(S.likes.length)p.push(`맛있었던 메뉴 <b>${S.likes.map(esc).join(', ')}</b> → 더 자주`);
+ if(S.dislikes.length)p.push(`별로였던 메뉴 <b>${S.dislikes.map(esc).join(', ')}</b> → 덜 추천`);
+ if(S.total)p.push(`기록 ${S.total}개 중 추천 메뉴와 연결된 것 ${S.matched}개`);
+ el.innerHTML='<div class="logbox">'+p.join('<br>')+'</div>';}
 function linkBtns(list){return '<div class="btns">'+list.map(([t,u])=>`<a href="${u}" target="_blank" rel="noopener">${esc(t)}</a>`).join('')+'</div>';}
 function blkHome(d,main){return `<div class="blk${main?' main':''}"><h4>🍳 레시피 <span class="muted">${d.time}분 · ${esc(d.lv)}</span></h4>
  <div class="ing"><b>재료</b> ${esc(d.ing)}</div><ol>${d.steps.map(s=>`<li>${esc(s)}</li>`).join('')}</ol></div>`;}
@@ -369,7 +412,7 @@ document.getElementById('next').onclick=()=>{if(mi<months.length-1){mi++;renderT
 const FAILS=D.fails||[];
 document.getElementById('news').innerHTML=D.news.length?D.news.map(n=>`<li><a href="${esc(n.link)}" target="_blank" rel="noopener">${esc(n.title)}</a></li>`).join('')
  :`<li class="muted">${FAILS.includes('오늘의 음식 뉴스')?'<b>데이터 없음</b> — 다시 시도했지만 가져오지 못했습니다. 다음 실행 때 다시 받아 옵니다.':'오늘 기사가 없습니다.'}</li>`;
-renderThemes();renderCal();
+renderLog();renderThemes();renderCal();
 </script></body></html>
 """
 
@@ -417,7 +460,7 @@ def render_pdf(d: dict, now: dt.datetime, path: Path) -> Path:
         # 1쪽: 달력 (가로)
         fig = plt.figure(figsize=(11.69, 8.27))
         fig.text(0.04, 0.955, f"이번달 식단 추천 · {now.year}년 {now.month}월", fontsize=17, fontweight="bold", color=TEXT, va="top")
-        fig.text(0.04, 0.918, f"생성 {d['generated']} · 하루 3가지(국·찌개 + 메인 + 별미) · 표시 없음=집밥  [키트]=밀키트  [배달]=배달"
+        fig.text(0.04, 0.918, f"생성 {d['generated']} · 하루 3가지(국·찌개 + 메인 + 별미) · 표시 없음=집밥  [키트]=밀키트  [배달]=배달  먹음=식사 기록"
                  " · 레시피·주문 링크는 웹페이지에서", fontsize=8, color=SUB, va="top")
         if d.get("fails"):
             fig.text(0.96, 0.955, "※ 데이터 없음: " + ", ".join(d["fails"]), fontsize=8, color="#a15c00", ha="right", va="top")
@@ -441,7 +484,12 @@ def render_pdf(d: dict, now: dt.datetime, path: Path) -> Path:
             fig.text(cx + 0.007, cy + rh - 0.011, str(day) + (" 오늘" if today else ""), fontsize=8.5, fontweight="bold", va="top",
                      color="#d1352b" if c == 0 else "#2a6fd6" if c == 6 else TEXT)
             yy = cy + rh - 0.034
-            for i, m in (plan[day - 1] if day - 1 < len(plan) else []):
+            ate = d.get("log", {}).get(f"{ym}-{day:02d}")
+            if ate:
+                for k, part in enumerate(wrap("먹음: " + ", ".join(t for t, _ in ate), 22)[:3]):
+                    fig.text(cx + 0.008, yy, part, fontsize=6.6, va="top", color=SUB, fontweight="bold")
+                    yy -= 0.0165
+            for i, m in ([] if ate and day < now.day else (plan[day - 1] if day - 1 < len(plan) else [])):
                 for k, part in enumerate(wrap(MK[m] + dishes[i]["n"], 22)[:2]):
                     fig.text(cx + 0.008, yy, ("· " if k == 0 else "  ") + part, fontsize=6.8, va="top", color=MC[m] if m else TEXT)
                     yy -= 0.0165
@@ -505,6 +553,7 @@ def main(argv=None):
     ap.add_argument("--no-pdf", action="store_true")
     ap.add_argument("--demo", action="store_true")
     ap.add_argument("--date", help="테스트용 기준 날짜 YYYY-MM-DD")
+    ap.add_argument("--log-file", help="테스트용: 구글 드라이브 대신 로컬 식사기록.xlsx")
     a = ap.parse_args(argv)
 
     now = dt.datetime.now(KST)
@@ -512,6 +561,11 @@ def main(argv=None):
         now = dt.datetime.strptime(a.date, "%Y-%m-%d").replace(hour=6, tzinfo=KST)
     out = Path(os.path.expanduser(a.outdir))
     (out / "archive").mkdir(parents=True, exist_ok=True)
+    global HIST, LOG_STATE
+    if a.log_file:
+        HIST, LOG_STATE = L.History.from_xlsx(Path(a.log_file).read_bytes()), "ok"
+    elif not a.demo:
+        load_history()
     news = demo_news() if a.demo else fetch_news()
     d = build_data(now, news)
     d["fails"] = list(NR.FAILS)

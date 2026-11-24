@@ -43,6 +43,8 @@ jobs:
           pip install -q -r "$REPORT/requirements.txt"
 
       - name: 식단 페이지 생성
+        env:
+          MEAL_LOG_ID: ${{ secrets.MEAL_LOG_ID }}   # 구글 드라이브 '은형/식사기록.xlsx' 파일 ID (없으면 기록 없이 추천)
         run: python "$REPORT/meal_plan.py" --outdir "_site/$REPORT"
 
       - name: 기존 리포트 보존 확인

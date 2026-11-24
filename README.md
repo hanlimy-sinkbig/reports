@@ -3,6 +3,7 @@
 GitHub Actions가 자동으로 만드는 개인 리포트 모음입니다. 결과는 GitHub Pages로 게시됩니다.
 
 - 목록: https://hanlimy-sinkbig.github.io/reports/
+- 이번달 식단 추천 (매일 06:15): https://hanlimy-sinkbig.github.io/reports/daily_meal-plan/
 - 시장 브리핑 (평일 06:30): https://hanlimy-sinkbig.github.io/reports/daily_market-brief/
 - AI 뉴스 대시보드 (매일 06:40): https://hanlimy-sinkbig.github.io/reports/daily_ai-news/
 - 교육·입시 인사이트 (매일 06:50): https://hanlimy-sinkbig.github.io/reports/daily_edu-insight/

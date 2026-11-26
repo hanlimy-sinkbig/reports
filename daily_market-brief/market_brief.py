@@ -253,27 +253,43 @@ class LiveSource:
 
         with ThreadPoolExecutor(max_workers=6) as ex:
             metas = dict(ex.map(meta, kr))
+        def to_kst(ts):
+            """regularMarketTime 을 KST datetime 으로. yfinance 버전에 따라
+            정수(epoch 초)·문자열·pd.Timestamp·datetime 으로 와서 모두 받는다."""
+            if ts is None or ts == "":
+                return None
+            if isinstance(ts, (int, float)) or (isinstance(ts, str) and ts.strip().isdigit()):
+                return dt.datetime.fromtimestamp(int(float(ts)), KST)
+            t_ = pd.Timestamp(ts)
+            if pd.isna(t_):
+                return None
+            t_ = t_.tz_localize("UTC") if t_.tzinfo is None else t_
+            return t_.tz_convert(KST).to_pydatetime()
+
         filled = []
         for t in kr:
-            m, df = metas.get(t) or {}, out[t]
-            ts, px = m.get("regularMarketTime"), m.get("regularMarketPrice")
-            if not ts or px is None:
-                continue
-            day = dt.datetime.fromtimestamp(int(ts), KST)
-            d = pd.Timestamp(day.date())
-            if d <= df.index[-1]:
-                continue                                   # 이미 들어 있음
-            if day.date() == now.date() and (now.hour, now.minute) < (15, 40):
-                continue                                   # 장중 미완성 봉은 붙이지 않음
-            prev = float(df["Close"].iloc[-1])
-            px = float(px)
-            hi = float(m.get("regularMarketDayHigh") or max(px, prev))
-            lo = float(m.get("regularMarketDayLow") or min(px, prev))
-            out[t] = pd.concat([df, pd.DataFrame(
-                {"Open": [prev], "High": [max(hi, px, prev)], "Low": [min(lo, px, prev)],
-                 "Close": [px], "Volume": [float(m.get("regularMarketVolume") or 0)]},
-                index=[d])])                                # 시가는 제공되지 않아 전일 종가로 대신
-            filled.append(f"{t}→{d:%m/%d}")
+            try:                                           # 보정은 부가 기능: 실패해도 리포트는 계속
+                m, df = metas.get(t) or {}, out[t]
+                px = m.get("regularMarketPrice")
+                day = to_kst(m.get("regularMarketTime"))
+                if day is None or px is None:
+                    continue
+                d = pd.Timestamp(day.date())
+                if d <= df.index[-1]:
+                    continue                               # 이미 들어 있음
+                if day.date() == now.date() and (now.hour, now.minute) < (15, 40):
+                    continue                               # 장중 미완성 봉은 붙이지 않음
+                prev = float(df["Close"].iloc[-1])
+                px = float(px)
+                hi = float(m.get("regularMarketDayHigh") or max(px, prev))
+                lo = float(m.get("regularMarketDayLow") or min(px, prev))
+                out[t] = pd.concat([df, pd.DataFrame(
+                    {"Open": [prev], "High": [max(hi, px, prev)], "Low": [min(lo, px, prev)],
+                     "Close": [px], "Volume": [float(m.get("regularMarketVolume") or 0)]},
+                    index=[d])])                            # 시가는 제공되지 않아 전일 종가로 대신
+                filled.append(f"{t}→{d:%m/%d}")
+            except Exception as e:  # noqa: BLE001
+                log(f"한국 시세 전날 봉 보정 건너뜀({t}): {e}")
         if filled:
             log(f"한국 시세 전날 봉 보정 {len(filled)}개: {', '.join(filled[:5])}{'…' if len(filled) > 5 else ''}")
 

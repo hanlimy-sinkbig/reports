@@ -1,0 +1,116 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex">
+<title>포트폴리오 대시보드</title>
+<link rel="stylesheet" href="style.css?v=20261123a">
+</head>
+<body>
+<header class="top">
+  <div>
+    <h1>포트폴리오 대시보드</h1>
+    <p class="sub" id="asof">매매일지 CSV를 불러오면 분석이 시작됩니다.</p>
+  </div>
+  <div class="loader">
+    <label class="btn primary">CSV 열기 (매매일지·목표가격)<input type="file" id="file" accept=".csv,text/csv" multiple hidden></label>
+    <button class="btn" id="btnSample">샘플로 보기</button>
+    <span class="pwok" id="pwOk" hidden title="누르면 비밀번호를 다시 입력할 수 있습니다"></span>
+    <span class="pwbox" id="pwBox" hidden><input type="password" id="pw" placeholder="대시보드 비밀번호" autocomplete="current-password"><button class="btn primary" id="btnPw">열기</button></span>
+    <button class="btn ghost" id="btnForget" hidden>이 기기에서 지우기</button>
+  </div>
+</header>
+<p class="privacy">🔒 매매일지(journal.csv)와 목표가격(targets.csv)은 암호화되어 올라오고, 이 브라우저 안에서 비밀번호로 풀어 함께 자동으로 불러옵니다(비밀번호는 이 기기에만 기억). 직접 고른 CSV도 서버로 전송되지 않습니다. <b>CSV 열기</b>에서는 두 파일을 한꺼번에 고르거나 하나만 골라도 됩니다.</p>
+<div id="warn" class="warn" hidden></div>
+
+<main id="app" hidden>
+  <section class="tiles" id="tiles"></section>
+
+  <!-- ───── 경고 지표 ───── -->
+  <section class="card alerts">
+    <div class="card-h"><h2>경고 지표 <small id="alertSum"></small></h2><span class="hint" id="alertCap"></span></div>
+    <div class="alerts-grid" id="alerts"></div>
+    <p class="hint">🔴 위험 · 🟡 주의 · 🟢 양호 · ⚪ 판단 불가. 칸마다 아래 작은 글씨가 기준입니다. 매매 관련 지표(빈도·비용·사유)는 위 기간 필터를 따르고, 기간을 고르지 않으면 최근 12개월로 계산합니다.</p>
+  </section>
+
+  <!-- ───── 기간 필터 ───── -->
+  <section class="card period">
+    <div class="card-h">
+      <h2>기간</h2>
+      <div class="filters">
+        <div class="ranges" id="pRanges">
+          <button data-p="1M">1개월</button><button data-p="3M">3개월</button><button data-p="6M">6개월</button>
+          <button data-p="YTD">올해</button><button data-p="1Y">1년</button><button data-p="ALL" class="on">전체</button>
+        </div>
+        <input type="date" id="pFrom"> ~ <input type="date" id="pTo">
+      </div>
+    </div>
+    <div class="psum" id="pSum"></div>
+    <p class="hint" id="pHint">① 매매일지는 선택한 기간의 거래만, ② 종목별 합산은 현재 보유 종목과 그 기간에 거래한 종목을 보여 주고, 아래 추세 그래프도 같은 기간으로 그립니다.</p>
+  </section>
+
+  <!-- ───── 표 섹션 ───── -->
+  <section class="card">
+    <div class="card-h">
+      <h2>① 매매일지 원본</h2>
+      <div class="filters">
+        <details class="ms" id="fMarket" data-label="구분"><summary>구분: 전체</summary><div class="ms-pop"></div></details>
+        <details class="ms" id="fTicker" data-label="종목"><summary>종목: 전체</summary><div class="ms-pop"></div></details>
+        <details class="ms" id="fSide" data-label="매매"><summary>매매: 전체</summary><div class="ms-pop"></div></details>
+        <select class="limit" data-t="t1" title="표시 행 수"><option value="10">10개</option><option value="20" selected>20개</option><option value="50">50개</option><option value="0">전체</option></select><span class="cnt" id="cnt-t1"></span>
+      </div>
+    </div>
+    <div class="tbl-wrap scroll"><table id="t1"></table></div>
+  </section>
+
+  <section class="card">
+    <div class="card-h"><h2>② 종목별 합산 현황</h2><div class="filters"><span class="hint" id="t2hint"></span><select class="limit" data-t="t2" title="표시 행 수"><option value="10" selected>10개</option><option value="20">20개</option><option value="50">50개</option><option value="0">전체</option></select><span class="cnt" id="cnt-t2"></span></div></div>
+    <div class="tbl-wrap scroll"><table id="t2"></table></div>
+  </section>
+
+  <section class="card scenario">
+    <div class="card-h">
+      <h2>③ 시나리오 표 <small>현재 보유 종목 · 노란 칸을 고쳐 보세요</small></h2>
+      <div class="filters">
+        <label class="fx">USD/KRW <input type="text" inputmode="decimal" id="fxEdit" data-d="1"></label>
+        <button class="btn primary" id="btnUpdate">업데이트</button>
+        <button class="btn" id="btnReset">초기화</button>
+        <select class="limit" data-t="t3" title="표시 행 수"><option value="10" selected>10개</option><option value="20">20개</option><option value="50">50개</option><option value="0">전체</option></select><span class="cnt" id="cnt-t3"></span>
+      </div>
+    </div>
+    <p class="hint">수량·평균단가·현재가·환율·목표가·손절가를 바꾸고 <b>업데이트</b>를 누르면 아래 그래프와 경고 지표·조언이 그 값으로 다시 계산됩니다. 목표가·손절가는 목표가격.csv 값으로 시작하며, 여기서 고친 값은 파일에 저장되지 않습니다(빈칸 = 없음). <b>초기화</b>는 ② 표·목표가격.csv 값으로 되돌립니다.</p>
+    <div class="tbl-wrap scroll"><table id="t3"></table></div>
+    <p class="badge" id="scnBadge" hidden>⚑ 시나리오 값이 그래프에 반영된 상태입니다</p>
+  </section>
+
+  <!-- ───── 추세 섹션 ───── -->
+  <h2 class="sec">추세</h2>
+  <div class="ranges" id="ranges">
+    <button data-r="1M">1개월</button><button data-r="3M">3개월</button><button data-r="6M">6개월</button>
+    <button data-r="YTD">올해</button><button data-r="1Y">1년</button><button data-r="ALL" class="on">전체</button>
+  </div>
+  <div class="grid">
+    <section class="card wide"><h3>총 자산 추이</h3><p class="cap">평가금액 + 현금. 점선은 순입금액(입금 − 출금), 음영은 보유 종목의 평가금액과 매입원금 사이</p><div class="viz-legend-slot"></div><div class="chart" id="cAsset"></div></section>
+    <section class="card wide"><h3>누적 손익 추이</h3><p class="cap">평가손익(미실현)·실현손익(배당 포함)·합계</p><div class="viz-legend-slot"></div><div class="chart" id="cPnl"></div></section>
+    <section class="card"><h3>종목 비중 변화</h3><p class="cap">보유 종목 평가금액 기준 100% 누적 · 선택 기간에 사고판 종목을 편입 순으로 쌓음(나머지는 기타 보유) · 종목명은 그래프에 마우스를 올리면 표시</p><div class="chart" id="cWeight"></div></section>
+    <section class="card"><h3>종목별 수익률 변화</h3><p class="cap">그날 평균단가 대비 수익률 (원화 기준, 환율 포함) · 선택 기간에 사고판 종목만 · 종목명은 마우스를 올리면 표시</p><div class="chart" id="cRet"></div></section>
+    <section class="card"><h3>포트폴리오 수익률 · 고점 대비 하락</h3><p class="cap">총손익 ÷ 순입금액(입금 기록이 없으면 매입원금), 고점 대비 낙폭(MDD)</p><div class="viz-legend-slot"></div><div class="chart" id="cDD"></div></section>
+    <section class="card"><h3>월별 실현손익</h3><p class="cap">매도 손익 + 배당 (빨강 이익 · 파랑 손실)</p><div class="viz-legend-slot"></div><div class="chart" id="cReal"></div></section>
+    <section class="card"><h3>월별 매수·매도 금액</h3><p class="cap">원화 환산</p><div class="viz-legend-slot"></div><div class="chart" id="cFlow"></div></section>
+    <section class="card"><h3>매매 건별 손익</h3><p class="cap">매도 1건마다 확정된 손익</p><div class="viz-legend-slot"></div><div class="chart" id="cTrades"></div></section>
+    <section class="card"><h3>현재 비중</h3><div class="donuts"><div id="dStock"></div><div id="dMarket"></div></div></section>
+    <section class="card"><h3>매매 성과 요약</h3><p class="cap" id="statsCap"></p><div id="stats" class="stats"></div></section>
+  </div>
+
+  <section class="card advice">
+    <h2>조언 · 점검 포인트</h2>
+    <ul id="advice"></ul>
+    <p class="disclaimer">자동 규칙으로 만든 점검 메모이며 투자 권유가 아닙니다. 세금·제도는 매년 바뀌니 증권사·국세청 안내로 확인하세요.</p>
+  </section>
+</main>
+<footer class="foot" id="foot"></footer>
+<script src="charts.js?v=20261123a"></script>
+<script src="app.js?v=20261123a"></script>
+</body>
+</html>
